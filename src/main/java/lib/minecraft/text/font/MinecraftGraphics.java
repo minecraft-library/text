@@ -7,6 +7,7 @@ import dev.simplified.image.pixel.PixelGraphics;
 import org.jetbrains.annotations.NotNull;
 
 import java.awt.*;
+import java.awt.font.GlyphVector;
 
 /**
  * A {@link PixelGraphics} subclass that renders {@link MinecraftFont} glyphs directly into a
@@ -33,7 +34,7 @@ public class MinecraftGraphics extends PixelGraphics {
      */
     public MinecraftGraphics(@NotNull PixelBuffer target) {
         super(target);
-        this.currentMcFont = MinecraftFont.REGULAR;
+        this.currentMcFont = MinecraftFont.Vanilla.REGULAR;
     }
 
     private MinecraftGraphics(@NotNull MinecraftGraphics source) {
@@ -58,16 +59,26 @@ public class MinecraftGraphics extends PixelGraphics {
         int pxPerMcPx = MinecraftFont.MC_PIXEL_SCALE;
         int cx = translateX() + xMcPx * pxPerMcPx;
         int cy = translateY() + yMcPx * pxPerMcPx;
-
-        for (int i = 0; i < str.length(); i++) {
-            int cp = str.charAt(i);
-            MinecraftFont.GlyphData glyph = this.currentMcFont.glyph(cp);
-            blitGlyph(glyph, cx, cy);
-            cx += glyph.advanceWidth();
-        }
+        int fillArgb = getColor().getRGB();
+        // Drive the shared advance walk directly - no MinecraftGlyphVector/list allocation on the hot path.
+        this.currentMcFont.walk(str, (glyph, penX) -> blitGlyph(glyph, cx + (int) Math.round(penX), cy, fillArgb));
     }
 
-    private void blitGlyph(@NotNull MinecraftFont.GlyphData glyph, int x, int y) {
+    /**
+     * Blits one glyph at buffer coordinates {@code (x, y)}, offset by the glyph's bearing.
+     * <p>
+     * Monochrome glyphs are tinted: each pixel's alpha is multiplied against {@code tintArgb}'s
+     * RGB (the vanilla text path). Colour glyphs ({@link MinecraftGlyph#color()}) carry their own
+     * RGBA artwork and are blitted natively - {@code tintArgb} is ignored - so pack {@code sbix}
+     * strikes keep their authored colours.
+     *
+     * @param glyph the glyph to blit
+     * @param x the buffer X of the cursor
+     * @param y the buffer Y of the cursor
+     * @param tintArgb the tint applied to monochrome glyphs (ignored for colour glyphs)
+     */
+    void blitGlyph(@NotNull MinecraftGlyph glyph, int x, int y, int tintArgb) {
+        if (glyph.kind() == MinecraftGlyphVector.Kind.SPACE) return;   // advance-only sentinel, paints nothing
         PixelBuffer bitmap = glyph.bitmap();
         int bw = bitmap.width();
         int bh = bitmap.height();
@@ -77,9 +88,10 @@ public class MinecraftGraphics extends PixelGraphics {
         int tw = target.width();
         int th = target.height();
 
-        int tintR = ColorMath.red(colorArgb());
-        int tintG = ColorMath.green(colorArgb());
-        int tintB = ColorMath.blue(colorArgb());
+        boolean color = glyph.color();
+        int tintR = ColorMath.red(tintArgb);
+        int tintG = ColorMath.green(tintArgb);
+        int tintB = ColorMath.blue(tintArgb);
 
         Shape clipShape = getClip();
         int clipX0 = clipShape instanceof Rectangle c ? c.x : 0;
@@ -97,10 +109,72 @@ public class MinecraftGraphics extends PixelGraphics {
                 int px = gx + bx;
                 if (px < clipX0 || px >= clipX1) continue;
 
-                int tinted = ColorMath.pack(alpha, tintR, tintG, tintB);
+                int source = color ? pixel : ColorMath.pack(alpha, tintR, tintG, tintB);
                 int dst = target.getPixel(px, py);
-                target.setPixel(px, py, ColorMath.blend(tinted, dst, BlendMode.NORMAL));
+                target.setPixel(px, py, ColorMath.blend(source, dst, BlendMode.NORMAL));
             }
+        }
+    }
+
+    // --- colour glyph vector rendering ---
+
+    /**
+     * Paints a {@link MinecraftGlyphVector} at an mcPixel origin using the current colour as the
+     * mono-glyph tint.
+     *
+     * @param vector the laid-out colour run
+     * @param xMcPx the run origin X in mcPixels
+     * @param yMcPx the run origin Y in mcPixels (baseline for mono glyphs)
+     */
+    public void drawGlyphVector(@NotNull MinecraftGlyphVector vector, int xMcPx, int yMcPx) {
+        drawGlyphVector(vector, xMcPx, yMcPx, getColor());
+    }
+
+    /**
+     * Draws a {@link GlyphVector} at the mcPixel run origin {@code (x, y)}, per the AWT
+     * {@link java.awt.Graphics2D#drawGlyphVector} contract. Only a {@link MinecraftGlyphVector} carries
+     * the pack strike bitmaps and sidecar layout this renderer blits, so a foreign {@code GlyphVector}
+     * implementation is rejected with {@link IllegalArgumentException} rather than silently
+     * mis-rendered: real AWT would reduce it to bare glyph codes and drop both the pack positions and
+     * the pack pixels (measured - see {@link MinecraftGlyphVector}). {@code x} and {@code y} are read
+     * as the mcPixel origin, matching {@link #drawString}, and the current colour tints mono glyphs.
+     *
+     * @param g the glyph vector, which must be a {@link MinecraftGlyphVector}
+     * @param x the run origin X in mcPixels
+     * @param y the run origin Y in mcPixels (baseline for mono glyphs)
+     * @throws IllegalArgumentException when {@code g} is not a {@link MinecraftGlyphVector}
+     */
+    @Override
+    public void drawGlyphVector(@NotNull GlyphVector g, float x, float y) {
+        if (!(g instanceof MinecraftGlyphVector vector))
+            throw new IllegalArgumentException(
+                "MinecraftGraphics can only draw a MinecraftGlyphVector; a foreign GlyphVector ("
+                    + g.getClass().getName() + ") carries no pack strike bitmaps, and AWT would reduce it to glyph "
+                    + "codes, dropping the pack layout. Lay text out via MinecraftFont.layout(String).");
+        drawGlyphVector(vector, Math.round(x), Math.round(y), getColor());
+    }
+
+    /**
+     * Paints a {@link MinecraftGlyphVector} at an mcPixel origin.
+     * <p>
+     * Raster glyphs blit their native {@code sbix} strike (untinted); mono fallback glyphs are
+     * tinted by {@code fill}; space glyphs paint nothing. Pen positions come from the vector's
+     * sidecar-driven layout - Java2D's zeroed {@code GlyphVector} advances are never consulted.
+     *
+     * @param vector the laid-out colour run
+     * @param xMcPx the run origin X in mcPixels
+     * @param yMcPx the run origin Y in mcPixels (baseline for mono glyphs)
+     * @param fill the tint applied to mono glyphs
+     */
+    public void drawGlyphVector(@NotNull MinecraftGlyphVector vector, int xMcPx, int yMcPx, @NotNull Color fill) {
+        int pxPerMcPx = MinecraftFont.MC_PIXEL_SCALE;
+        int cx = translateX() + xMcPx * pxPerMcPx;
+        int cy = translateY() + yMcPx * pxPerMcPx;
+        int fillArgb = fill.getRGB();
+
+        for (int i = 0; i < vector.glyphCount(); i++) {
+            MinecraftGlyph glyph = vector.positionedGlyph(i);
+            blitGlyph(glyph, cx + (int) Math.round(glyph.penX()), cy, fillArgb);   // blitGlyph no-ops on SPACE
         }
     }
 
@@ -112,7 +186,7 @@ public class MinecraftGraphics extends PixelGraphics {
      * Custom-loaded OTF fonts always report {@link Font#PLAIN} from {@link Font#getStyle()}
      * because AWT does not introspect the typeface file - style is whatever was set with
      * {@code deriveFont(style)} (never, for us). Going through {@link #setFont(Font)} would
-     * therefore always resolve to {@link MinecraftFont#REGULAR}. Callers that already know
+     * therefore always resolve to {@link MinecraftFont.Vanilla#REGULAR}. Callers that already know
      * which variant they want (e.g. the text pipeline picking BOLD from a
      * {@link lib.minecraft.text.ColorSegment}'s {@code &l} flag) should use this method
      * instead.
@@ -125,22 +199,22 @@ public class MinecraftGraphics extends PixelGraphics {
 
     @Override
     public void setFont(@NotNull Font font) {
-        this.currentMcFont = MinecraftFont.of(MinecraftFont.Style.of(font.getStyle()));
+        this.currentMcFont = MinecraftFont.Vanilla.of(MinecraftFont.Style.of(font.getStyle()));
     }
 
     @Override
     public @NotNull Font getFont() {
-        return this.currentMcFont.getActual();
+        return this.currentMcFont.metrics().getFont();
     }
 
     @Override
     public @NotNull FontMetrics getFontMetrics(@NotNull Font f) {
-        return MinecraftFont.of(MinecraftFont.Style.of(f.getStyle())).getFontMetrics();
+        return MinecraftFont.Vanilla.of(MinecraftFont.Style.of(f.getStyle())).metrics();
     }
 
     @Override
     public @NotNull FontMetrics getFontMetrics() {
-        return this.currentMcFont.getFontMetrics();
+        return this.currentMcFont.metrics();
     }
 
     // --- copy ---
