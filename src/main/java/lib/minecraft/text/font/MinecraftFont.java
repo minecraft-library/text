@@ -431,7 +431,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             BufferedImage temp = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = temp.createGraphics();
             try {
-                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
                 g.setFont(this.actual);
                 this.awtMetrics = g.getFontMetrics();
                 this.awtFrc = g.getFontRenderContext();
@@ -519,7 +519,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             Graphics2D gg = glyphImage.createGraphics();
 
             try {
-                gg.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                gg.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
                 gg.setFont(this.actual);
                 gg.setColor(java.awt.Color.WHITE);
                 gg.drawString(new String(chars), -bearingX, -bearingY);
