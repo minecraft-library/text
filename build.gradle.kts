@@ -19,13 +19,10 @@ repositories {
 
 dependencies {
     // Simplified Annotations
+    compileOnly(libs.simplified.annotations)
     annotationProcessor(libs.simplified.annotations)
-
-    // Lombok
-    compileOnly(libs.lombok)
-    annotationProcessor(libs.lombok)
-    testCompileOnly(libs.lombok)
-    testAnnotationProcessor(libs.lombok)
+    testCompileOnly(libs.simplified.annotations)
+    testAnnotationProcessor(libs.simplified.annotations)
 
     // Tests
     testImplementation(libs.hamcrest)
@@ -36,9 +33,9 @@ dependencies {
     // Simplified Libraries (github.com/simplified-dev). Pinned to the post-interface-migration
     // commit on collections (ece3042 onward) - older pins linked against the AtomicCollection
     // class form and surfaced LambdaConversionException at consumer link time.
-    api("com.github.simplified-dev:collections") { version { strictly("652c22d") } }
-    api("com.github.simplified-dev:utils") { version { strictly("7c2feb7") } }
-    api("com.github.simplified-dev:image") { version { strictly("953ca92") } }
+    api("com.github.simplified-dev:collections") { version { strictly("8ca6cb8") } }
+    api("com.github.simplified-dev:utils") { version { strictly("821499b") } }
+    api("com.github.simplified-dev:image") { version { strictly("a4d0ad8") } }
 
     // Gson - JsonObject / JsonElement used by TextSegment + friends
     api(libs.gson)

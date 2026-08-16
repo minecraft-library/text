@@ -1,8 +1,8 @@
 package lib.minecraft.text.tooling;
 
+import dev.simplified.annotations.UtilityClass;
 import dev.simplified.collection.Concurrent;
 import lib.minecraft.text.font.MinecraftFont;
-import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
