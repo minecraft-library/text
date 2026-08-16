@@ -1,7 +1,7 @@
 package lib.minecraft.text.font;
 
-import lombok.AccessLevel;
-import lombok.Getter;
+import dev.simplified.annotations.AccessLevel;
+import dev.simplified.annotations.Getter;
 import org.jetbrains.annotations.NotNull;
 
 import java.awt.Font;

@@ -1,8 +1,8 @@
 package lib.minecraft.text;
 
+import dev.simplified.annotations.Getter;
 import dev.simplified.util.RegexUtil;
 import dev.simplified.util.StringUtil;
-import lombok.Getter;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

@@ -2,12 +2,12 @@ package lib.minecraft.text;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.simplified.annotations.Getter;
+import dev.simplified.annotations.Setter;
+import dev.simplified.annotations.ToString;
 import dev.simplified.util.StringUtil;
 import lib.minecraft.text.event.ClickEvent;
 import lib.minecraft.text.event.HoverEvent;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.ToString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

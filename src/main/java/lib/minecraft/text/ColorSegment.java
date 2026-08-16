@@ -1,13 +1,13 @@
 package lib.minecraft.text;
 
 import com.google.gson.JsonObject;
+import dev.simplified.annotations.Getter;
+import dev.simplified.annotations.Setter;
+import dev.simplified.annotations.ToString;
 import dev.simplified.collection.Concurrent;
 import dev.simplified.collection.ConcurrentList;
 import dev.simplified.util.StringUtil;
 import lib.minecraft.text.font.MinecraftFont;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.ToString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

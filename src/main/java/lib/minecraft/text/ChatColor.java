@@ -1,9 +1,9 @@
 package lib.minecraft.text;
 
-import lombok.AccessLevel;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.experimental.Accessors;
+import dev.simplified.annotations.AccessLevel;
+import dev.simplified.annotations.Getter;
+import dev.simplified.annotations.NamingStyle;
+import dev.simplified.annotations.NoArgsConstructor;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -202,8 +202,7 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
      * Vanilla legacy chat colors ({@code 0-9}, {@code a-f}) with baked foreground and
      * derived shadow RGB values.
      */
-    @Getter
-    @Accessors(fluent = true)
+    @Getter(style = NamingStyle.FLUENT)
     enum Legacy implements ChatColor {
 
         BLACK('0', new Color(0x000000)),
