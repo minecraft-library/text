@@ -16,40 +16,40 @@ import static org.hamcrest.Matchers.is;
 class ChatColorTest {
 
     @Test
-    @DisplayName("every entry's backgroundRgb equals (fgRgb & 0xFCFCFC) >> 2")
-    void backgroundMatchesVanillaFormula() {
-        for (ChatColor.Legacy color : ChatColor.Legacy.values()) {
+    @DisplayName("every entry's shadowRgb equals (fgRgb & 0xFCFCFC) >> 2")
+    void shadowMatchesVanillaFormula() {
+        ChatColor.Legacy.forEach(color -> {
             int fg = color.rgb() & 0xFFFFFF;
             int expected = (fg & 0xFCFCFC) >> 2;
-            int actual = color.backgroundRgb() & 0xFFFFFF;
+            int actual = color.shadowRgb() & 0xFFFFFF;
             assertThat(color.name() + " shadow", actual, is(equalTo(expected)));
-        }
+        });
     }
 
     @Test
     @DisplayName("GOLD shadow is 0x3F2A00 (1.13+ formula), not 0x2A2A00 (1.8.9 table quirk)")
     void goldShadowMatches113Plus() {
         assertThat(ChatColor.Legacy.GOLD.rgb() & 0xFFFFFF, is(0xFFAA00));
-        assertThat(ChatColor.Legacy.GOLD.backgroundRgb() & 0xFFFFFF, is(0x3F2A00));
+        assertThat(ChatColor.Legacy.GOLD.shadowRgb() & 0xFFFFFF, is(0x3F2A00));
     }
 
     @Test
     @DisplayName("GREEN shadow is 0x153F15")
     void greenShadow() {
         assertThat(ChatColor.Legacy.GREEN.rgb() & 0xFFFFFF, is(0x55FF55));
-        assertThat(ChatColor.Legacy.GREEN.backgroundRgb() & 0xFFFFFF, is(0x153F15));
+        assertThat(ChatColor.Legacy.GREEN.shadowRgb() & 0xFFFFFF, is(0x153F15));
     }
 
     @Test
     @DisplayName("WHITE shadow is 0x3F3F3F")
     void whiteShadow() {
-        assertThat(ChatColor.Legacy.WHITE.backgroundRgb() & 0xFFFFFF, is(0x3F3F3F));
+        assertThat(ChatColor.Legacy.WHITE.shadowRgb() & 0xFFFFFF, is(0x3F3F3F));
     }
 
     @Test
     @DisplayName("BLACK shadow is 0x000000")
     void blackShadow() {
-        assertThat(ChatColor.Legacy.BLACK.backgroundRgb() & 0xFFFFFF, is(0x000000));
+        assertThat(ChatColor.Legacy.BLACK.shadowRgb() & 0xFFFFFF, is(0x000000));
     }
 
     @Test
@@ -57,7 +57,7 @@ class ChatColorTest {
     void customColorDerivesShadow() {
         ChatColor custom = ChatColor.of(0xFF8040);
         assertThat(custom.rgb() & 0xFFFFFF, is(0xFF8040));
-        assertThat(custom.backgroundRgb() & 0xFFFFFF, is((0xFF8040 & 0xFCFCFC) >> 2));
+        assertThat(custom.shadowRgb() & 0xFFFFFF, is((0xFF8040 & 0xFCFCFC) >> 2));
     }
 
     @Test

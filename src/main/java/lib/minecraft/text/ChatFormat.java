@@ -1,12 +1,14 @@
 package lib.minecraft.text;
 
+import dev.simplified.annotations.EnumLookup;
 import dev.simplified.annotations.Getter;
+import dev.simplified.annotations.KeyField;
 import dev.simplified.util.RegexUtil;
 import dev.simplified.util.StringUtil;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.awt.*;
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
@@ -15,6 +17,7 @@ import java.util.regex.Pattern;
  * These modify text style without setting a color.
  */
 @Getter
+@EnumLookup
 public enum ChatFormat {
 
     OBFUSCATED('k', 0xFFFFFF),
@@ -26,47 +29,22 @@ public enum ChatFormat {
 
     public static final char SECTION_SYMBOL = '\u00a7';
 
+    @KeyField
     private final char code;
-    private final @NotNull Color backgroundColor;
+    private final @NotNull Color shadowColor;
     private final @NotNull String toString;
 
-    ChatFormat(char code, int brgb) {
+    ChatFormat(char code, int shadowRgb) {
         this.code = code;
-        this.backgroundColor = new Color(brgb);
+        this.shadowColor = new Color(shadowRgb);
         this.toString = new String(new char[]{ SECTION_SYMBOL, code });
-    }
-
-    /**
-     * Looks up a format by its single-character code.
-     *
-     * @param code the code character ({@code k-o}, {@code r})
-     * @return the matching format, or {@code null} if the code is not a format
-     */
-    public static @Nullable ChatFormat of(char code) {
-        for (ChatFormat format : values())
-            if (format.code == code) return format;
-
-        return null;
-    }
-
-    /**
-     * Looks up a format by its enum name (case-sensitive).
-     *
-     * @param name the enum constant name
-     * @return the matching format, or {@code null} if not found
-     */
-    public static @Nullable ChatFormat of(@NotNull String name) {
-        for (ChatFormat format : values())
-            if (format.name().equals(name)) return format;
-
-        return null;
     }
 
     /**
      * Returns {@code true} when the character is a valid color or format code.
      */
     public static boolean isValid(char code) {
-        return ChatColor.of(code) != null || ChatFormat.of(code) != null;
+        return ChatColor.isValid(code) || findByCode(code).isPresent();
     }
 
     /**
@@ -89,7 +67,7 @@ public enum ChatFormat {
     }
 
     public @NotNull String toJsonString() {
-        return this.name().toLowerCase();
+        return this.name().toLowerCase(Locale.ROOT);
     }
 
     @Override

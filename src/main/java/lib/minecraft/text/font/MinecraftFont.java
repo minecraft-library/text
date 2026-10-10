@@ -1,7 +1,10 @@
 package lib.minecraft.text.font;
 
 import dev.simplified.annotations.AccessLevel;
+import dev.simplified.annotations.EnumLookup;
 import dev.simplified.annotations.Getter;
+import dev.simplified.annotations.KeyField;
+import dev.simplified.annotations.NoArgsConstructor;
 import dev.simplified.annotations.RequiredArgsConstructor;
 import dev.simplified.collection.Concurrent;
 import dev.simplified.collection.ConcurrentMap;
@@ -34,6 +37,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -54,10 +58,10 @@ import java.util.function.Function;
  *   {@code sbix} strike cache and a vanilla mono fallback.</li>
  * </ul>
  * <p>
- * A process-wide {@code FontId -> MinecraftFont} registry (see {@link #register}, {@link #getOrLoad})
- * holds both kinds under one key space: the vanilla constants auto-register their synthetic ids
- * ({@code minecraft:default}, {@code minecraft:default/bold}, ...) so consumers iterate
- * {@link #fontIds()} rather than switching on the enum.
+ * Both kinds answer under one key space (see {@link #get}, {@link #getOrLoad}): a pack font is held
+ * by a process-wide registry ({@link #register}), and a vanilla constant is looked up by its
+ * synthetic id ({@code minecraft:default}, {@code minecraft:default/bold}, ...) on the enum itself,
+ * so consumers iterate {@link #fontIds()} rather than switching on the enum.
  *
  * @see MinecraftGlyph
  * @see MinecraftFontMetrics
@@ -281,7 +285,9 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
     // --- font registry (FontId -> MinecraftFont) ---
 
     /**
-     * Registers a font, replacing any previous registration for its {@link #fontId()}.
+     * Registers a font, replacing any previous registration for its {@link #fontId()}. A font
+     * registered under a {@link Vanilla} id is answered in place of the vanilla font until it is
+     * unregistered.
      *
      * @param font the font to register
      * @return the registered font
@@ -292,32 +298,30 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
     }
 
     /**
-     * Returns the registered font for a font id, if any. Vanilla ids are auto-registered on first
-     * registry use.
+     * Returns the font for a font id - the one registered under it, else the {@link Vanilla} font
+     * that carries it.
      *
      * @param fontId the font id
-     * @return the registered font, or empty
+     * @return the font, or empty where none is registered and no vanilla font carries the id
      */
     static @NotNull Optional<MinecraftFont> get(@NotNull FontId fontId) {
-        Registry.ensureVanilla();
-        return Optional.ofNullable(Registry.MAP.get(fontId));
+        return Optional.ofNullable(Registry.MAP.get(fontId)).or(() -> Vanilla.findByFontId(fontId));
     }
 
     /**
-     * Returns the registered font for a font id, resolving and registering a pack {@link Color} font
-     * via {@link Color#load(FontId)} on first use.
+     * Returns the font for a font id as {@link #get(FontId)} does, resolving and registering a pack
+     * {@link Color} font via {@link Color#load(FontId)} where it answers none.
      *
      * @param fontId the font id
      * @return the font
      */
     static @NotNull MinecraftFont getOrLoad(@NotNull FontId fontId) {
-        Registry.ensureVanilla();
-        return Registry.MAP.computeIfAbsent(fontId, Color::load);
+        return get(fontId).orElseGet(() -> Registry.MAP.computeIfAbsent(fontId, Color::load));
     }
 
     /**
-     * Removes a font id's registration. Vanilla ids re-register on the next {@link #clear()} or
-     * registry read, so this is meaningful only for pack fonts.
+     * Removes a font id's registration. A {@link Vanilla} font is never registered, so this is
+     * meaningful only for pack fonts and for a font registered in place of a vanilla one.
      *
      * @param fontId the font id to unregister
      */
@@ -326,22 +330,23 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
     }
 
     /**
-     * Clears every pack registration and re-registers the vanilla constants. Primarily for test
-     * isolation; the vanilla ids always remain present so downstream iteration stays stable.
+     * Clears every registration. Primarily for test isolation; the {@link Vanilla} fonts are not
+     * registrations, so they stay available.
      */
     static void clear() {
         Registry.MAP.clear();
-        Registry.registerVanilla();
     }
 
     /**
-     * Returns a snapshot of every registered font id. Vanilla ids are auto-registered on first use.
+     * Returns a snapshot of every font id {@link #get(FontId)} answers: each {@link Vanilla} font's
+     * and every registered one.
      *
-     * @return the registered font ids
+     * @return the font ids
      */
     static @NotNull Set<FontId> fontIds() {
-        Registry.ensureVanilla();
-        return Set.copyOf(Registry.MAP.keySet());
+        Set<FontId> fontIds = new HashSet<>(Registry.MAP.keySet());
+        Vanilla.forEach(font -> fontIds.add(font.fontId()));
+        return Set.copyOf(fontIds);
     }
 
     // --- inner types ---
@@ -357,6 +362,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * time - no {@link Graphics2D} is needed after initialization.
      */
     @Getter
+    @EnumLookup
     enum Vanilla implements MinecraftFont {
 
         REGULAR("Minecraft-Regular.otf", Style.REGULAR, "minecraft:default"),
@@ -389,8 +395,10 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
         /**
          * The style category this enum value belongs to.
          */
+        @KeyField
         private final @NotNull Style style;
 
+        @KeyField
         @Getter(AccessLevel.NONE)
         private final @NotNull FontId fontId;
 
@@ -455,10 +463,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
          * @return the matching font, or {@link #REGULAR}
          */
         public static @NotNull Vanilla of(@NotNull Style style) {
-            for (Vanilla font : values())
-                if (font.style == style) return font;
-
-            return REGULAR;
+            return findByStyle(style).orElse(REGULAR);
         }
 
         @Override
@@ -980,20 +985,15 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
          * cache itself is unbounded for the same reason: the decoded strike set per file is bounded by
          * the font's glyphs.
          */
+        @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
         static final class SharedStrikes {
 
             private static final @NotNull ConcurrentMap<String, SharedStrikes> BY_CONTENT = Concurrent.newMap();
 
             private final @NotNull SbixReader reader;
             private final byte @NotNull [] fontBytes;
-            private final @NotNull ConcurrentMap<Long, Optional<PixelBuffer>> strikeCache;
+            private final @NotNull ConcurrentMap<Long, Optional<PixelBuffer>> strikeCache = Concurrent.newMap();
             private volatile Font awtFont;
-
-            private SharedStrikes(@NotNull SbixReader reader, byte @NotNull [] fontBytes) {
-                this.reader = reader;
-                this.fontBytes = fontBytes;
-                this.strikeCache = Concurrent.newMap();
-            }
 
             /**
              * Returns the shared store for the given font bytes, constructing (and parsing) a
@@ -1088,6 +1088,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * The style category a {@link Vanilla} font entry belongs to.
      */
     @Getter
+    @EnumLookup
     @RequiredArgsConstructor
     enum Style {
 
@@ -1098,6 +1099,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
         GALACTIC(4),
         ILLAGERALT(5);
 
+        @KeyField
         private final int id;
 
         /**
@@ -1108,10 +1110,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
          * @return the matching style, or {@link #REGULAR} when none matches
          */
         public static @NotNull Style of(int id) {
-            for (Style style : values())
-                if (style.getId() == id) return style;
-
-            return REGULAR;
+            return findById(id).orElse(REGULAR);
         }
 
     }
@@ -1121,11 +1120,10 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * fields declared after the constants are initialized (JLS 12.4.1), so deferring the computation
      * behind a holder keeps {@link #defaultCacheRoot()} usable from the {@link Vanilla} constructor.
      */
+    @NoArgsConstructor(access = AccessLevel.PRIVATE)
     final class DefaultsHolder {
 
         static final @NotNull Path CACHE_ROOT = computeDefaultCacheRoot();
-
-        private DefaultsHolder() {}
 
         private static @NotNull Path computeDefaultCacheRoot() {
             String osName = System.getProperty("os.name", "").toLowerCase();
@@ -1142,27 +1140,14 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
     }
 
     /**
-     * Backing store for the {@code FontId -> MinecraftFont} registry. The vanilla constants
-     * auto-register their synthetic ids on first registry use; forcing {@link Vanilla} class init
-     * through a guarded {@link #registerVanilla()} avoids an NPE from interface/enum init ordering.
+     * Backing store for the fonts registered by id - pack fonts, and any font registered in place of
+     * a {@link Vanilla} one. The vanilla fonts are looked up on {@link Vanilla} itself. A holder
+     * class, because an interface's own fields are public.
      */
+    @NoArgsConstructor(access = AccessLevel.PRIVATE)
     final class Registry {
 
         static final @NotNull ConcurrentMap<FontId, MinecraftFont> MAP = Concurrent.newMap();
-
-        private static volatile boolean vanillaRegistered = false;
-
-        private Registry() {}
-
-        static void ensureVanilla() {
-            if (!vanillaRegistered) registerVanilla();
-        }
-
-        static synchronized void registerVanilla() {
-            for (Vanilla font : Vanilla.values())
-                MAP.put(font.fontId(), font);
-            vanillaRegistered = true;
-        }
 
     }
 

@@ -1,5 +1,8 @@
 package lib.minecraft.text.font;
 
+import dev.simplified.annotations.AccessLevel;
+import dev.simplified.annotations.NoArgsConstructor;
+
 /**
  * The single font-unit conversion shared by colour-glyph layout and metrics.
  * <p>
@@ -8,9 +11,8 @@ package lib.minecraft.text.font;
  * Converting once, in one place, is what keeps the measure path and the draw path in exact
  * agreement - the {@code measure == draw} invariant depends on both summing the same values.
  */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class FontUnits {
-
-    private FontUnits() {}
 
     /**
      * Converts a value in font units to output (buffer) pixels - the same space

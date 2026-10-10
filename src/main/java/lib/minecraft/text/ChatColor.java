@@ -1,13 +1,16 @@
 package lib.minecraft.text;
 
 import dev.simplified.annotations.AccessLevel;
+import dev.simplified.annotations.EnumLookup;
 import dev.simplified.annotations.Getter;
+import dev.simplified.annotations.KeyField;
 import dev.simplified.annotations.NamingStyle;
 import dev.simplified.annotations.NoArgsConstructor;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.awt.*;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -51,12 +54,12 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
     @NotNull Color color();
 
     /**
-     * The background (shadow) color derived via the 1.13+ formula
-     * {@code (rgb & 0xFCFCFC) >> 2}.
+     * The shadow color, derived via the 1.13+ formula {@code (rgb & 0xFCFCFC) >> 2} unless a
+     * {@link Custom} color overrides it.
      *
      * @return the shadow {@link Color}
      */
-    @NotNull Color backgroundColor();
+    @NotNull Color shadowColor();
 
     /**
      * The single-character legacy code ({@code 0-9}, {@code a-f}) if this is a
@@ -77,12 +80,12 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
     }
 
     /**
-     * The background (shadow) color as a packed ARGB int.
+     * The shadow color as a packed ARGB int.
      *
-     * @return the background ARGB value
+     * @return the shadow ARGB value
      */
-    default int backgroundRgb() {
-        return this.backgroundColor().getRGB();
+    default int shadowRgb() {
+        return this.shadowColor().getRGB();
     }
 
     /**
@@ -136,7 +139,7 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
      * @return whether the code maps to a known legacy color
      */
     static boolean isValid(char code) {
-        return Legacy.of(code) != null;
+        return Legacy.findByCode(code).isPresent();
     }
 
     /**
@@ -146,17 +149,17 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
      * @return the matching color, or {@code null} if the code is not a color
      */
     static @Nullable ChatColor of(char code) {
-        return Legacy.of(code);
+        return Legacy.ofCode(code);
     }
 
     /**
-     * Looks up a {@link Legacy} color by its enum name (case-sensitive).
+     * Looks up a {@link Legacy} color by its enum name, ignoring case.
      *
      * @param name the enum constant name
      * @return the matching color, or {@code null} if not found
      */
     static @Nullable ChatColor of(@NotNull String name) {
-        return Legacy.of(name);
+        return Legacy.ofName(name);
     }
 
     /**
@@ -171,22 +174,25 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
     }
 
     /**
-     * Parses a JSON text-component {@code color} string - either a lowercase {@link Legacy}
-     * name ({@code "red"}) or a {@code #RRGGBB} hex literal for a {@link Custom} color.
+     * Parses a JSON text-component {@code color} string as vanilla does - a {@link Legacy} name
+     * spelled exactly as vanilla spells it, in lowercase ({@code "red"}), or {@code #} followed by
+     * a hexadecimal value in {@code 0..0xFFFFFF} for a {@link Custom} color, of any length that
+     * holds one ({@code "#5f5"} is {@code 0x0005F5}).
      *
      * @param value the JSON color string
      * @return the parsed color, or {@code null} if the string is not recognised
      */
     static @Nullable ChatColor fromJsonString(@NotNull String value) {
-        if (value.startsWith("#") && value.length() == 7) {
+        if (value.startsWith("#")) {
             try {
-                return of(Integer.parseInt(value.substring(1), 16));
+                int rgb = Integer.parseInt(value.substring(1), 16);
+                return rgb >= 0 && rgb <= 0xFFFFFF ? of(rgb) : null;
             } catch (NumberFormatException ignored) {
                 return null;
             }
         }
 
-        return Legacy.of(value.toUpperCase());
+        return Legacy.ofJsonString(value);
     }
 
     /**
@@ -202,6 +208,7 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
      * Vanilla legacy chat colors ({@code 0-9}, {@code a-f}) with baked foreground and
      * derived shadow RGB values.
      */
+    @EnumLookup
     @Getter(style = NamingStyle.FLUENT)
     enum Legacy implements ChatColor {
 
@@ -222,18 +229,23 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
         YELLOW('e', new Color(0xFFFF55)),
         WHITE('f', new Color(0xFFFFFF));
 
+        @KeyField
         @Getter(AccessLevel.NONE)
         private final char code;
         private final @NotNull Color color;
-        private final @NotNull Color backgroundColor;
+        private final @NotNull Color shadowColor;
         @Getter(AccessLevel.NONE)
         private final @NotNull String legacyString;
+        @KeyField
+        @Getter(AccessLevel.NONE)
+        private final @NotNull String jsonString;
 
         Legacy(char code, @NotNull Color color) {
             this.code = code;
             this.color = color;
-            this.backgroundColor = shadowOf(color);
+            this.shadowColor = shadowOf(color);
             this.legacyString = new String(new char[]{ ChatFormat.SECTION_SYMBOL, code });
+            this.jsonString = this.name().toLowerCase(Locale.ROOT);
         }
 
         @Override
@@ -257,7 +269,7 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
 
         @Override
         public @NotNull String toJsonString() {
-            return this.name().toLowerCase();
+            return this.jsonString;
         }
 
         /**
@@ -266,33 +278,7 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
          * @return the next legacy color
          */
         public @NotNull Legacy nextColor() {
-            return values()[(ordinal() + 1) % values().length];
-        }
-
-        /**
-         * Looks up a legacy color by its single-character code.
-         *
-         * @param code the code character ({@code 0-9}, {@code a-f})
-         * @return the matching color, or {@code null} if the code is not a color
-         */
-        public static @Nullable Legacy of(char code) {
-            for (Legacy color : values())
-                if (color.code == code) return color;
-
-            return null;
-        }
-
-        /**
-         * Looks up a legacy color by its enum name (case-sensitive).
-         *
-         * @param name the enum constant name
-         * @return the matching color, or {@code null} if not found
-         */
-        public static @Nullable Legacy of(@NotNull String name) {
-            for (Legacy color : values())
-                if (color.name().equals(name)) return color;
-
-            return null;
+            return findByOrdinal((this.ordinal() + 1) % size()).orElseThrow();
         }
 
         @Override
@@ -307,16 +293,16 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
      * and has no {@link Legacy} code representation.
      *
      * @param color the foreground color
-     * @param backgroundColor the shadow color
+     * @param shadowColor the shadow color
      */
     record Custom(
         @NotNull Color color,
-        @NotNull Color backgroundColor
+        @NotNull Color shadowColor
     ) implements ChatColor {
 
         public Custom {
             Objects.requireNonNull(color, "color");
-            Objects.requireNonNull(backgroundColor, "backgroundColor");
+            Objects.requireNonNull(shadowColor, "shadowColor");
         }
 
         @Override
@@ -343,7 +329,7 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
     final class Builder {
 
         private @NotNull Color color = Color.WHITE;
-        private @NotNull Optional<Color> backgroundColor = Optional.empty();
+        private @NotNull Optional<Color> shadowColor = Optional.empty();
 
         /**
          * Sets the foreground color.
@@ -375,8 +361,8 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
          * @param color the shadow color
          * @return this builder
          */
-        public @NotNull Builder backgroundColor(@NotNull Color color) {
-            this.backgroundColor = Optional.of(color);
+        public @NotNull Builder shadowColor(@NotNull Color color) {
+            this.shadowColor = Optional.of(color);
             return this;
         }
 
@@ -387,8 +373,8 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
          * @param rgb the packed RGB shadow color
          * @return this builder
          */
-        public @NotNull Builder backgroundColor(int rgb) {
-            this.backgroundColor = Optional.of(new Color(rgb & 0xFFFFFF));
+        public @NotNull Builder shadowColor(int rgb) {
+            this.shadowColor = Optional.of(new Color(rgb & 0xFFFFFF));
             return this;
         }
 
@@ -399,7 +385,7 @@ public sealed interface ChatColor permits ChatColor.Legacy, ChatColor.Custom {
          * @return the built custom color
          */
         public @NotNull Custom build() {
-            return new Custom(this.color, this.backgroundColor.orElseGet(() -> shadowOf(this.color)));
+            return new Custom(this.color, this.shadowColor.orElseGet(() -> shadowOf(this.color)));
         }
 
     }
