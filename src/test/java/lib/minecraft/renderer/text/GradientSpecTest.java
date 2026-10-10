@@ -1,7 +1,6 @@
 package lib.minecraft.renderer.text;
 
 import com.google.gson.JsonObject;
-import lib.minecraft.text.ColorSegment;
 import lib.minecraft.text.GradientSpec;
 import lib.minecraft.text.TextSegment;
 import org.junit.jupiter.api.DisplayName;
@@ -209,13 +208,13 @@ class GradientSpecTest {
     }
 
     @Test
-    @DisplayName("ColorSegment carries the gradient through toJson -> TextSegment.fromJson")
+    @DisplayName("TextSegment carries the gradient through toJson -> fromJson")
     void colorSegmentRoundTrip() {
         GradientSpec spec = GradientSpec.builder(GradientSpec.Mode.RANGE)
             .addStop(0xFF0000).addStop(0x00FF00).addStop(0x0000FF)
             .bandPx(1)
             .build();
-        ColorSegment segment = ColorSegment.builder().withText("Legendary").withGradient(spec).build();
+        TextSegment segment = TextSegment.builder().text("Legendary").gradient(spec).build();
 
         TextSegment restored = TextSegment.fromJson(segment.toJson());
         assertThat(restored, notNullValue());
@@ -227,8 +226,8 @@ class GradientSpecTest {
     void copyChainPreservesGradient() {
         GradientSpec spec = GradientSpec.builder(GradientSpec.Mode.START_END)
             .addStop(0x123456).addStop(0x654321).build();
-        ColorSegment original = ColorSegment.builder().withText("x").withGradient(spec).build();
-        ColorSegment copy = ColorSegment.from(original).build();
+        TextSegment original = TextSegment.builder().text("x").gradient(spec).build();
+        TextSegment copy = TextSegment.from(original).build();
         assertThat(copy.getGradient(), is(Optional.of(spec)));
     }
 }

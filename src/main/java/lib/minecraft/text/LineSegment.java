@@ -2,31 +2,36 @@ package lib.minecraft.text;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
-import dev.simplified.annotations.AccessLevel;
+import dev.simplified.annotations.ClassBuilder;
+import dev.simplified.annotations.Collector;
+import dev.simplified.annotations.EqualsAndHashCode;
 import dev.simplified.annotations.Getter;
-import dev.simplified.annotations.RequiredArgsConstructor;
+import dev.simplified.annotations.ToString;
 import dev.simplified.collection.Concurrent;
 import dev.simplified.collection.ConcurrentList;
 import dev.simplified.collection.StreamUtil;
 import dev.simplified.util.StringUtil;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Arrays;
-
+/**
+ * One line of text - the runs drawn left to right, each plain text in the style it is shown in.
+ */
 @Getter
-@RequiredArgsConstructor(access = AccessLevel.PRIVATE)
+@ToString
+@ClassBuilder
+@EqualsAndHashCode
 public final class LineSegment {
 
-    private final @NotNull ConcurrentList<ColorSegment> segments;
-
-    public static @NotNull Builder builder() {
-        return new Builder();
-    }
+    /**
+     * The runs, in drawing order.
+     */
+    @Collector(singular = true)
+    private final @NotNull ConcurrentList<TextSegment> segments = Concurrent.newList();
 
     /**
      * Explode the {@link #getSegments()} into single-words for use in a dynamic newline system.
      */
-    public @NotNull ConcurrentList<ColorSegment> explode() {
+    public @NotNull ConcurrentList<TextSegment> explode() {
         return this.getSegments()
             .stream()
             .flatMap(segment -> segment.explode().stream())
@@ -36,10 +41,16 @@ public final class LineSegment {
     public int length() {
         return this.getSegments()
             .stream()
-            .mapToInt(colorSegment -> StringUtil.length(colorSegment.getText()))
+            .mapToInt(segment -> StringUtil.length(segment.getText()))
             .sum();
     }
 
+    /**
+     * Writes this line as a text component list - an empty first element the runs are appended to, so no
+     * run inherits another's style.
+     *
+     * @return the list
+     */
     public @NotNull JsonElement toJson() {
         JsonArray rootArray = new JsonArray();
         rootArray.add("");
@@ -54,7 +65,7 @@ public final class LineSegment {
      * which is probably why it was chosen. To get around this, it is common practice to substitute
      * the symbol for another, then translate it later. Often '&' is used, but this can differ from person
      * to person. In case the string does not have a {@link ChatFormat#SECTION_SYMBOL}, the method also checks for the
-     * {@param characterSubstitute}
+     * {@code symbolSubstitute}.
      *
      * @param legacyText The text to make into an object
      * @param symbolSubstitute The character substitute
@@ -64,27 +75,6 @@ public final class LineSegment {
         return StreamUtil.ofArrays(legacyText.split("(\r?\n|\\\\n)", -1))
             .map(line -> TextSegment.fromLegacy(line, symbolSubstitute))
             .collect(Concurrent.toList());
-    }
-
-    public static class Builder {
-
-        private final ConcurrentList<ColorSegment> segments = Concurrent.newList();
-
-        public Builder withSegments(@NotNull ColorSegment... segments) {
-            return this.withSegments(Arrays.asList(segments));
-        }
-
-        public Builder withSegments(@NotNull Iterable<ColorSegment> segments) {
-            segments.forEach(this.segments::add);
-            return this;
-        }
-
-        public @NotNull LineSegment build() {
-            return new LineSegment(
-                this.segments.toUnmodifiable()
-            );
-        }
-
     }
 
 }

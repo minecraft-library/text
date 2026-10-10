@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Gradient color spec for a {@link ColorSegment} - modes, smoothness, scroll, and shear.
+ * Gradient color spec for a {@link TextSegment} - modes, smoothness, scroll, and shear.
  * <p>
  * An immutable data model only: it carries no rendering behavior. A renderer reduces every mode
  * to one sampling function {@code sample(t)} over the segment's normalized pixel width, quantized

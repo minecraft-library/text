@@ -4,6 +4,7 @@ import dev.simplified.image.pixel.BlendMode;
 import dev.simplified.image.pixel.ColorMath;
 import dev.simplified.image.pixel.PixelBuffer;
 import dev.simplified.image.pixel.PixelGraphics;
+import lib.minecraft.text.TextSegment;
 import org.jetbrains.annotations.NotNull;
 
 import java.awt.*;
@@ -132,7 +133,7 @@ public class MinecraftGraphics extends PixelGraphics {
 
     /**
      * Draws a {@link GlyphVector} at the mcPixel run origin {@code (x, y)}, per the AWT
-     * {@link java.awt.Graphics2D#drawGlyphVector} contract. Only a {@link MinecraftGlyphVector} carries
+     * {@link Graphics2D#drawGlyphVector} contract. Only a {@link MinecraftGlyphVector} carries
      * the pack strike bitmaps and sidecar layout this renderer blits, so a foreign {@code GlyphVector}
      * implementation is rejected with {@link IllegalArgumentException} rather than silently
      * mis-rendered: real AWT would reduce it to bare glyph codes and drop both the pack positions and
@@ -188,7 +189,7 @@ public class MinecraftGraphics extends PixelGraphics {
      * {@code deriveFont(style)} (never, for us). Going through {@link #setFont(Font)} would
      * therefore always resolve to {@link MinecraftFont.Vanilla#REGULAR}. Callers that already know
      * which variant they want (e.g. the text pipeline picking BOLD from a
-     * {@link lib.minecraft.text.ColorSegment}'s {@code &l} flag) should use this method
+     * {@link TextSegment}'s {@code &l} flag) should use this method
      * instead.
      *
      * @param font the Minecraft font variant to use for subsequent {@link #drawString} calls
