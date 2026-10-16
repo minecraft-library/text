@@ -17,9 +17,12 @@ import java.awt.font.GlyphVector;
  * <p>
  * Rendering is always at the font's native rasterization (no glyph pixel replication). Callers
  * that need a larger glyph for GUI-density use cases (e.g. stack counts on a hi-res icon)
- * should rasterize into a native-size scratch buffer and {@link PixelBuffer#blitScaled} the
- * result - this keeps glyph compositing in a single blend step while letting the caller choose
- * the upscale ratio independently.
+ * should rasterize into a native-size transparent scratch buffer and lay it down with
+ * {@link PixelBuffer#blitScaled(PixelBuffer, int, int, int, int, BlendMode)} under
+ * {@link BlendMode#PREMULTIPLIED} - this keeps glyph compositing in a single blend step while
+ * letting the caller choose the upscale ratio independently. Glyphs drawn onto transparency hold
+ * their colour already scaled by alpha, which {@link BlendMode#NORMAL} would scale a second time,
+ * darkening every partly covered edge.
  *
  * @see MinecraftFont
  * @see PixelGraphics
