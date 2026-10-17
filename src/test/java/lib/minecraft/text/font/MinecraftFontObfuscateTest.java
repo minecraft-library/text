@@ -38,7 +38,11 @@ class MinecraftFontObfuscateTest {
     /** A codepoint the generated fonts do not map. */
     private static final int UNMAPPED = 0x4E00;
 
-    private static final int NO_BREAK_SPACE = 0x00A0;
+    /**
+     * Whitespace other than U+0020: a no-break space, which {@link Character#isWhitespace} rejects,
+     * and an en space the fonts map and an ideographic space they do not, which it accepts.
+     */
+    private static final int[] OTHER_WHITESPACE = {0x00A0, 0x2002, 0x3000};
 
     /** The demo colour font's raster rows laid out at 16 px. */
     private static final List<Integer> DEMO_ROWS_AT_16_PX = List.of(
@@ -117,16 +121,19 @@ class MinecraftFontObfuscateTest {
     @Test
     @DisplayName("whitespace other than U+0020 is substituted at its own advance")
     void otherWhitespaceIsSubstituted() {
-        float expected = advance(Vanilla.REGULAR, NO_BREAK_SPACE);
-        Set<Integer> picks = new HashSet<>();
+        for (int whitespace : OTHER_WHITESPACE) {
+            float expected = advance(Vanilla.REGULAR, whitespace);
+            Set<Integer> picks = new HashSet<>();
 
-        for (long seed = 0; seed < SEEDS; seed++) {
-            int pick = Vanilla.REGULAR.obfuscate(NO_BREAK_SPACE, new Random(seed));
-            assertThat(advance(Vanilla.REGULAR, pick), is(expected));
-            picks.add(pick);
+            for (long seed = 0; seed < SEEDS; seed++) {
+                long drawn = seed;
+                int pick = Vanilla.REGULAR.obfuscate(whitespace, new Random(seed));
+                assertEquals(expected, advance(Vanilla.REGULAR, pick), () -> describe(Vanilla.REGULAR, whitespace, drawn));
+                picks.add(pick);
+            }
+
+            assertThat(String.format("U+%04X", whitespace), picks, hasItem(not(whitespace)));
         }
-
-        assertThat(picks, hasItem(not(NO_BREAK_SPACE)));
     }
 
     @Test
