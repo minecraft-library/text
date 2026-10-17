@@ -39,8 +39,11 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
 import java.util.Optional;
+import java.util.Random;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.random.RandomGenerator;
+import java.util.stream.IntStream;
 
 /**
  * The unified home for every Minecraft-style font, whether a vanilla monospace atlas or a pack
@@ -193,6 +196,53 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             pen += glyph.signedAdvance();
         }
         return pen;
+    }
+
+    /**
+     * Returns the codepoint obfuscated text draws in place of {@code codepoint} - a random glyph of
+     * this font laid out at exactly the original's non-bold advance, chosen with at most one draw from
+     * {@code random}.
+     * <p>
+     * U+0020 comes back unchanged with no draw. Every other codepoint takes as candidates the glyphs
+     * this font lays out at exactly its non-bold advance, ordered by codepoint, and one
+     * {@code random.nextInt(n)} over the {@code n} candidates picks among them, a lone candidate
+     * included. A codepoint the font lacks takes the advance it lays out at, so it is substituted like
+     * any other. The original comes back where the vanilla client draws its missing glyph: when no
+     * glyph shares the advance, with no draw, and when the pick's advance, plain or bold, lies outside
+     * {@code 0..32} mcPixels. A non-bold run therefore keeps its width on every draw.
+     * <p>
+     * The bold and italic {@link Vanilla} fonts choose among {@link Vanilla#REGULAR}'s glyphs at its
+     * advance, because the client keys bold text on its non-bold advance, so a bold run's width can
+     * change from draw to draw as the client's does. A {@link Color} font's candidates are its own
+     * glyphs and its fallback's, a row of its own taking the place of the fallback's glyph for that
+     * codepoint. A seeded {@link Random} draws the client's sequence of values.
+     *
+     * @param codepoint the codepoint being obfuscated
+     * @param random the source of the draw
+     * @return the codepoint to draw in its place
+     */
+    int obfuscate(int codepoint, @NotNull RandomGenerator random);
+
+    /**
+     * Returns {@code text} as obfuscated text draws it - each codepoint replaced through
+     * {@link #obfuscate(int, RandomGenerator)}, in order, drawing from one stream.
+     * <p>
+     * The codepoint count and the run's non-bold advance are kept; the {@code char} length is not,
+     * since a pick may be a supplementary codepoint.
+     *
+     * @param text the text being obfuscated
+     * @param random the source of the draws, at most one per codepoint
+     * @return the text to draw in its place
+     */
+    default @NotNull String obfuscate(@NotNull String text, @NotNull RandomGenerator random) {
+        StringBuilder obfuscated = new StringBuilder(text.length());
+        int i = 0;
+        while (i < text.length()) {
+            int codepoint = text.codePointAt(i);
+            i += Character.charCount(codepoint);
+            obfuscated.appendCodePoint(obfuscate(codepoint, random));
+        }
+        return obfuscated.toString();
     }
 
     // --- awt interop surface (backs MinecraftGlyphVector's GlyphVector contract) ---
@@ -383,6 +433,12 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
         private static final int EAGER_ASCII_END = 126;
 
         /**
+         * The lowest glyph code the JDK resolves a codepoint to when it draws that codepoint as
+         * nothing - a control or a default-ignorable.
+         */
+        private static final int INVISIBLE_GLYPH_CODE = 0xFFFE;
+
+        /**
          * The underlying AWT font, retained for lazy glyph rasterization.
          */
         private final @NotNull Font actual;
@@ -426,6 +482,13 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
          */
         @Getter(AccessLevel.NONE)
         private final @NotNull ConcurrentMap<Integer, Integer> gidCache;
+
+        /**
+         * This font's own glyphs grouped by advance, scanned on the first {@link #glyphsByWidth()} -
+         * {@code null} until then, and always in the fonts that answer {@link #REGULAR}'s table.
+         */
+        @Getter(AccessLevel.NONE)
+        private volatile GlyphsByWidth glyphsByWidth;
 
         Vanilla(@NotNull String fileName, @NotNull Style style, @NotNull String fontId) {
             Resolved resolved = resolveFont(fileName);
@@ -501,6 +564,54 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
         @Override
         public int glyphCode(int codepoint) {
             return this.gidCache.computeIfAbsent(codepoint, cp -> resolveGlyphCode(this.actual, this.awtFrc, cp));
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public int obfuscate(int codepoint, @NotNull RandomGenerator random) {
+            return glyphsByWidth().obfuscate(codepoint, random);
+        }
+
+        /**
+         * Returns the glyphs obfuscated text in this font picks from, scanning them on first use.
+         * <p>
+         * The bold and italic fonts answer {@link #REGULAR}'s table, because the client draws every
+         * weight and slant from one font and keys on its non-bold advance. The other fonts scan their
+         * own codepoints and read each advance from the font's metrics, which rasterizes no glyph.
+         *
+         * @return the table
+         */
+        @NotNull GlyphsByWidth glyphsByWidth() {
+            return switch (this) {
+                case BOLD, ITALIC, BOLD_ITALIC -> REGULAR.glyphsByWidth();
+                case REGULAR, GALACTIC, ILLAGERALT -> scannedGlyphsByWidth();
+            };
+        }
+
+        private @NotNull GlyphsByWidth scannedGlyphsByWidth() {
+            GlyphsByWidth table = this.glyphsByWidth;
+            if (table == null) {
+                synchronized (this) {
+                    table = this.glyphsByWidth;
+                    if (table == null) {
+                        table = GlyphsByWidth.of(scanMembers(), this.awtMetrics::charWidth);
+                        this.glyphsByWidth = table;
+                    }
+                }
+            }
+            return table;
+        }
+
+        /**
+         * Returns every codepoint this font draws a visible glyph for, ascending: one the font can
+         * display whose glyph code is not one the JDK reserves for drawing nothing. Each glyph code is
+         * resolved afresh rather than through {@link #glyphCode}, which would cache every one.
+         */
+        private int @NotNull [] scanMembers() {
+            return IntStream.rangeClosed(0, Character.MAX_CODE_POINT)
+                .filter(this.actual::canDisplay)
+                .filter(codepoint -> resolveGlyphCode(this.actual, this.awtFrc, codepoint) < INVISIBLE_GLYPH_CODE)
+                .toArray();
         }
 
         /**
@@ -685,6 +796,12 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
          * store, the resolved rows differ per font id.
          */
         private final @NotNull ConcurrentMap<Integer, MinecraftGlyph> glyphCache;
+
+        /**
+         * This font's glyphs grouped by advance, built on the first {@link #glyphsByWidth()} and
+         * {@code null} until then.
+         */
+        private volatile GlyphsByWidth glyphsByWidth;
 
         private Color(
             @NotNull FontId fontId,
@@ -871,7 +988,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
 
             GlyphRow row = rowOptional.get();
             int unitsPerEm = this.sidecar.unitsPerEm();
-            float advance = (float) FontUnits.toOutputPixels(row.advance(), unitsPerEm);
+            float advance = rowAdvance(row);
             if (row.isSpace()) return MinecraftGlyph.space(codepoint, advance);
 
             int ppem = resolvePpem(row);
@@ -884,6 +1001,14 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             return strike(gid, ppem)
                 .map(bitmap -> MinecraftGlyph.color(codepoint, bitmap, advance, originX, originY, gid, ppem))
                 .orElseGet(() -> MinecraftGlyph.space(codepoint, advance));
+        }
+
+        /**
+         * Returns a row's advance in output pixels - the one value both its glyph and the obfuscation
+         * table read.
+         */
+        private float rowAdvance(@NotNull GlyphRow row) {
+            return (float) FontUnits.toOutputPixels(row.advance(), this.sidecar.unitsPerEm());
         }
 
         private int resolvePpem(@NotNull GlyphRow row) {
@@ -934,6 +1059,49 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
         @Override
         public int glyphCode(int codepoint) {
             return this.gidCache.computeIfAbsent(codepoint, cp -> resolveGlyphCode(awtFont(), COLOR_FRC, cp));
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public int obfuscate(int codepoint, @NotNull RandomGenerator random) {
+            return glyphsByWidth().obfuscate(codepoint, random);
+        }
+
+        /**
+         * Returns the glyphs obfuscated text in this font picks from, building them on first use: the
+         * fallback's members at the fallback's advances, then every row of this font id at its own
+         * advance, a row taking the place of the fallback's glyph for its codepoint as
+         * {@link #glyph(int)} does.
+         *
+         * @return the table
+         */
+        @NotNull GlyphsByWidth glyphsByWidth() {
+            GlyphsByWidth table = this.glyphsByWidth;
+            if (table == null) {
+                synchronized (this) {
+                    table = this.glyphsByWidth;
+                    if (table == null) {
+                        table = buildGlyphsByWidth();
+                        this.glyphsByWidth = table;
+                    }
+                }
+            }
+            return table;
+        }
+
+        private @NotNull GlyphsByWidth buildGlyphsByWidth() {
+            GlyphsByWidth fallback = switch (this.monoFallback) {
+                case Vanilla vanilla -> vanilla.glyphsByWidth();
+                case Color color -> color.glyphsByWidth();
+            };
+            IntStream rowCodepoints = this.sidecar.rows(this.fontId).stream().mapToInt(GlyphRow::codepoint);
+
+            return GlyphsByWidth.of(
+                IntStream.concat(fallback.members(), rowCodepoints).toArray(),
+                codepoint -> this.sidecar.lookup(this.fontId, codepoint)
+                    .map(this::rowAdvance)
+                    .orElseGet(() -> fallback.widthOf(codepoint))
+            );
         }
 
         /**
