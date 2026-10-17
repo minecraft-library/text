@@ -4,10 +4,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.StringReader;
+import java.util.List;
 import java.util.Optional;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -166,6 +170,23 @@ class ColorGlyphSidecarTest {
         assertThat(sidecar.unitsPerEm(), is(1024));
         assertThat(sidecar.lookup(ColorFontFixtures.DEMO, ColorFontFixtures.CP_FLAT).orElseThrow().gid(),
             is(ColorFontFixtures.GID_FLAT));
+    }
+
+    @Test
+    @DisplayName("rows lists every row of one font id, space rows included, and none of another's")
+    void rowsListOneFontId() {
+        ColorGlyphSidecar sidecar = ColorFontFixtures.sidecar();
+
+        List<GlyphRow> demo = sidecar.rows(ColorFontFixtures.DEMO);
+        assertThat(demo.stream().map(GlyphRow::codepoint).toList(), containsInAnyOrder(
+            ColorFontFixtures.CP_FLAT, ColorFontFixtures.CP_AA, ColorFontFixtures.CP_FLAT_DUP,
+            ColorFontFixtures.CP_MID, ColorFontFixtures.CP_DOWNSCALED, ColorFontFixtures.CP_TALL,
+            ColorFontFixtures.CP_NEG_SPACE, ColorFontFixtures.CP_FRAC_SPACE));
+        assertThat(demo.stream().map(GlyphRow::fontId).distinct().toList(), contains(ColorFontFixtures.DEMO));
+
+        assertThat(sidecar.rows(ColorFontFixtures.ALT).stream().map(GlyphRow::codepoint).toList(),
+            contains(ColorFontFixtures.CP_FLAT));
+        assertThat(sidecar.rows(FontId.parse("synth:missing")), is(empty()));
     }
 
     @Test
