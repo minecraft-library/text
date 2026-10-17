@@ -321,6 +321,22 @@ class MinecraftFontObfuscateTest {
         assertThat(table.widthOf(ColorFontFixtures.CP_NEG_SPACE), is(outer.glyph(ColorFontFixtures.CP_NEG_SPACE).signedAdvance()));
     }
 
+    @Test
+    @DisplayName("a colour font over a bold fallback files the fallback's glyphs at REGULAR's advances")
+    void colourOverBoldKeysOnTheRegularAdvance() {
+        MinecraftFont.Color font = MinecraftFont.Color.of(
+            ColorFontFixtures.DEMO, ColorFontFixtures.bytes(ColorFontFixtures.MERGED_TTF), ColorFontFixtures.sidecar(), Vanilla.BOLD
+        );
+        GlyphsByWidth table = font.glyphsByWidth();
+        GlyphsByWidth regular = Vanilla.REGULAR.glyphsByWidth();
+
+        for (int codepoint = 0x21; codepoint <= 0x7E; codepoint++) {
+            float width = regular.widthOf(codepoint);
+            assertEquals(width, table.widthOf(codepoint), String.format("U+%04X", codepoint));
+            assertThat(String.format("U+%04X", codepoint), boxed(table.bucket(width)), hasItem(codepoint));
+        }
+    }
+
     private static float advance(@NotNull MinecraftFont font, int codepoint) {
         return font.glyph(codepoint).signedAdvance();
     }

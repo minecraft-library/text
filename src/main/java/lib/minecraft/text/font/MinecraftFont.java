@@ -212,10 +212,11 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * {@code 0..32} mcPixels. A non-bold run therefore keeps its width on every draw.
      * <p>
      * The bold and italic {@link Vanilla} fonts choose among {@link Vanilla#REGULAR}'s glyphs at its
-     * advance, because the client keys bold text on its non-bold advance, so a bold run's width can
-     * change from draw to draw as the client's does. A {@link Color} font's candidates are its own
-     * glyphs and its fallback's, a row of its own taking the place of the fallback's glyph for that
-     * codepoint. A seeded {@link Random} draws the client's sequence of values.
+     * advance, as does a {@link Color} font over one of them, because the client keys bold text on its
+     * non-bold advance, so a bold run's width can change from draw to draw as the client's does. A
+     * {@link Color} font's candidates are its own glyphs and its fallback's, a row of its own taking
+     * the place of the fallback's glyph for that codepoint. A seeded {@link Random} draws the client's
+     * sequence of values.
      *
      * @param codepoint the codepoint being obfuscated
      * @param random the source of the draw
@@ -1069,9 +1070,9 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
 
         /**
          * Returns the glyphs obfuscated text in this font picks from, building them on first use: the
-         * fallback's members at the fallback's advances, then every row of this font id at its own
-         * advance, a row taking the place of the fallback's glyph for its codepoint as
-         * {@link #glyph(int)} does.
+         * fallback's members at the advances its own table files them under - {@link Vanilla#REGULAR}'s
+         * for a bold or italic fallback - then every row of this font id at its own advance, a row
+         * taking the place of the fallback's glyph for its codepoint as {@link #glyph(int)} does.
          *
          * @return the table
          */
