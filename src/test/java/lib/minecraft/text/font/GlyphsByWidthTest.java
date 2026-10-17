@@ -66,6 +66,12 @@ class GlyphsByWidthTest {
     }
 
     @Test
+    @DisplayName("a pick below 0 mcPixels keeps the original after its one draw, though its bold advance is 0")
+    void negativeAdvanceMakesPickFishy() {
+        assertPicksAreFishy(-2);   // -1 mcPixel, 0 in bold
+    }
+
+    @Test
     @DisplayName("a pick whose bold advance passes 32 mcPixels keeps the original, and one at 32 does not")
     void boldAdvanceMakesPickFishy() {
         assertPicksAreFishy(63);   // 31.5 mcPixels, 32.5 in bold
