@@ -200,6 +200,21 @@ class MinecraftFontObfuscateTest {
     }
 
     @Test
+    @DisplayName("a control the JDK draws as nothing is no candidate and keeps itself without a draw")
+    void invisibleControlsAreNoCandidates() {
+        Set<Integer> members = Vanilla.REGULAR.glyphsByWidth().members().boxed().collect(Collectors.toSet());
+
+        for (int control : new int[] {0x09, 0x0A, 0x0D}) {
+            assertThat(String.format("U+%04X is a member", control), members.contains(control), is(false));
+            for (long seed = 0; seed < SEEDS; seed++) {
+                Random random = new Random(seed);
+                assertThat(describe(Vanilla.REGULAR, control, seed), Vanilla.REGULAR.obfuscate(control, random), is(control));
+                assertThat(describe(Vanilla.REGULAR, control, seed), random.nextInt(), is(new Random(seed).nextInt()));
+            }
+        }
+    }
+
+    @Test
     @DisplayName("the table's advance is the advance layout gives the glyph")
     void tableAgreesWithLayout() {
         for (Vanilla font : List.of(Vanilla.REGULAR, Vanilla.GALACTIC, Vanilla.ILLAGERALT)) {
