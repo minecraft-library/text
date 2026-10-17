@@ -13,6 +13,7 @@ import java.io.Reader;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -145,6 +146,19 @@ public final class ColorGlyphSidecar {
      */
     public @NotNull Optional<GlyphRow> lookup(@NotNull FontId fontId, int codepoint) {
         return Optional.ofNullable(this.index.get(new FontIdCp(fontId, codepoint)));
+    }
+
+    /**
+     * Returns every row of a font id, raster and space alike, in no promised order.
+     *
+     * @param fontId the owning font id
+     * @return the font id's rows, empty when the sidecar defines none for it
+     */
+    @NotNull List<GlyphRow> rows(@NotNull FontId fontId) {
+        return this.index.values()
+            .stream()
+            .filter(row -> row.fontId().equals(fontId))
+            .toList();
     }
 
     /**
