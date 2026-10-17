@@ -308,6 +308,19 @@ class MinecraftFontObfuscateTest {
             assertThat(advance(font, font.obfuscate('A', new Random(seed))), is(16f));
     }
 
+    @Test
+    @DisplayName("a colour font over a colour fallback files the fallback's rows at their advances")
+    void colourFallbackContributesItsRows() {
+        MinecraftFont.Color demo = ColorFontFixtures.demoFont();
+        MinecraftFont.Color outer = MinecraftFont.Color.of(
+            ColorFontFixtures.ALT, ColorFontFixtures.bytes(ColorFontFixtures.MERGED_TTF), ColorFontFixtures.sidecar(), demo
+        );
+        GlyphsByWidth table = outer.glyphsByWidth();
+
+        assertThat(boxed(table.bucket(16f)), is(boxed(demo.glyphsByWidth().bucket(16f))));
+        assertThat(table.widthOf(ColorFontFixtures.CP_NEG_SPACE), is(outer.glyph(ColorFontFixtures.CP_NEG_SPACE).signedAdvance()));
+    }
+
     private static float advance(@NotNull MinecraftFont font, int codepoint) {
         return font.glyph(codepoint).signedAdvance();
     }
