@@ -1,6 +1,6 @@
 package lib.minecraft.text.font;
 
-import dev.simplified.image.pixel.PixelBuffer;
+import dev.simplified.image.PixelBuffer;
 import org.jetbrains.annotations.NotNull;
 
 /**

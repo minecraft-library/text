@@ -2,7 +2,7 @@ package lib.minecraft.text.font;
 
 import dev.simplified.image.pixel.BlendMode;
 import dev.simplified.image.pixel.ColorMath;
-import dev.simplified.image.pixel.PixelBuffer;
+import dev.simplified.image.PixelBuffer;
 import dev.simplified.image.pixel.PixelGraphics;
 import lib.minecraft.text.TextSegment;
 import org.jetbrains.annotations.NotNull;
