@@ -1,6 +1,6 @@
 package lib.minecraft.text.font;
 
-import dev.simplified.image.pixel.PixelBuffer;
+import dev.simplified.image.PixelBuffer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
