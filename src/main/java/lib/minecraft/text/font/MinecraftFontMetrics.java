@@ -82,6 +82,19 @@ public final class MinecraftFontMetrics extends FontMetrics {
         return this.mcFont.walk(text, MinecraftFont.GlyphSink.NOOP);
     }
 
+    /**
+     * Measures the total signed advance of a string in mcPixels with its fraction kept -
+     * {@link #stringAdvanceX(String)} divided by {@link MinecraftFont#MC_PIXEL_SCALE}. A run drawn
+     * through {@link MinecraftGraphics#drawString(String, float, float)} at this run's origin plus this
+     * width continues this run's pen. Walks codepoints, as {@link #stringAdvanceX(String)} does.
+     *
+     * @param text the text to measure
+     * @return the total advance in mcPixels
+     */
+    public float stringAdvanceMcPixels(@NotNull String text) {
+        return (float) (stringAdvanceX(text) / MinecraftFont.MC_PIXEL_SCALE);
+    }
+
     @Override
     public int stringWidth(@NotNull String str) {
         return Math.round((float) stringAdvanceX(str));

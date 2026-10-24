@@ -27,7 +27,7 @@ A Java 21 library that models Minecraft's chat text system - colours, formatting
 
 - **Chat color model** - `ChatColor.Legacy` for vanilla 1.8.9-style codes (`0-9`, `a-f`) and `ChatColor.Custom` for arbitrary modern RGB (`"color": "#FF00FF"`) with automatic shadow derivation via `(rgb & 0xFCFCFC) >> 2`
 - **Formatting codes** - `ChatFormat` enum covering `OBFUSCATED`, `BOLD`, `STRIKETHROUGH`, `UNDERLINE`, `ITALIC`, `RESET`, plus the `SECTION_SYMBOL` constant and legacy/alternate-code translation helpers
-- **Segment primitives** - `ColorSegment` (styled text run), `TextSegment` (styled run plus click/hover events), and `LineSegment` (list of styled runs) with builders and legacy-string parsing
+- **Segment primitives** - `TextSegment` (styled text run plus click/hover events and appended siblings) and `LineSegment` (list of styled runs) with builders and legacy-string parsing
 - **Event payloads** - `ClickEvent` and `HoverEvent` with Gson `JsonObject` (de)serialization
 - **Native OTF rendering** - `MinecraftFont` loads the official Minecraft fonts (Regular, Bold, Italic, BoldItalic, Galactic, Illageralt) and rasterizes glyphs into `PixelBuffer`s with zero AWT overhead after initialization
 - **Runtime font bootstrap** - downstream consumers don't need to ship OTFs: `MinecraftFont` invokes the generator on first use when the classpath has no `fonts/` resources
@@ -89,19 +89,19 @@ String json = hello.toJson().toString();
 Compose multiple styled runs into a single line:
 
 ```java
-import lib.minecraft.text.ColorSegment;
 import lib.minecraft.text.LineSegment;
+import lib.minecraft.text.TextSegment;
 
 LineSegment line = LineSegment.builder()
-    .withSegments(
-        ColorSegment.builder()
-            .withText("Hello, ")
-            .withColor(ChatColor.Legacy.GOLD)
+    .segments(
+        TextSegment.builder()
+            .text("Hello, ")
+            .color(ChatColor.Legacy.GOLD)
             .build(),
-        ColorSegment.builder()
-            .withText("world!")
-            .withColor(ChatColor.of(0xFF00FF))
-            .isBold()
+        TextSegment.builder()
+            .text("world!")
+            .color(ChatColor.of(0xFF00FF))
+            .bold(true)
             .build()
     )
     .build();
@@ -111,35 +111,41 @@ Or parse a legacy section-symbol string directly:
 
 ```java
 // Accepts § natively and '&' as a substitute (second overload lets you pick another substitute)
-LineSegment parsed = ColorSegment.fromLegacy("&6Hello, &lworld!");
+LineSegment parsed = TextSegment.fromLegacy("&6Hello, &lworld!");
 ```
 
 Render a line to a `PixelBuffer`:
 
 ```java
-import dev.simplified.image.pixel.PixelBuffer;
+import dev.simplified.image.PixelBuffer;
+import lib.minecraft.text.LineSegment;
+import lib.minecraft.text.TextSegment;
 import lib.minecraft.text.font.MinecraftFont;
 import lib.minecraft.text.font.MinecraftGraphics;
+
+LineSegment line = TextSegment.fromLegacy("&6Hello, &lworld!");
 
 // Output buffer is sized in native render pixels (mcPixels * MC_PIXEL_SCALE).
 PixelBuffer buffer = PixelBuffer.create(256, 32);
 MinecraftGraphics gfx = new MinecraftGraphics(buffer);
 
-// drawString takes mcPixel coordinates; the baseline convention matches AWT.
-int cursorXMcPx = 0;
-int baselineYMcPx = MinecraftFont.REGULAR.getFontMetrics().getAscentMcPixels();
+// drawString takes mcPixel coordinates; the baseline convention matches AWT. The pen is a float,
+// as the client's is: a run's width can end on half an mcPixel, and the next run starts there.
+float cursorXMcPx = 0;
+int baselineYMcPx = MinecraftFont.Vanilla.REGULAR.metrics().getAscentMcPixels();
 
-for (ColorSegment segment : line.getSegments()) {
+for (TextSegment segment : line.getSegments()) {
+    String text = segment.getText();
+    MinecraftFont font = MinecraftFont.Vanilla.of(segment.fontStyle());
     segment.getColor().ifPresent(c -> gfx.setColor(c.color()));
-    gfx.setFont(MinecraftFont.of(segment.fontStyle()));
-    gfx.drawString(segment.getText(), cursorXMcPx, baselineYMcPx);
-    // Font metrics return native-pixel advances; divide back into mcPixel space.
-    cursorXMcPx += gfx.getFontMetrics().stringWidth(segment.getText()) / MinecraftFont.MC_PIXEL_SCALE;
+    gfx.setFont(font);
+    gfx.drawString(text, cursorXMcPx, baselineYMcPx);
+    cursorXMcPx += font.metrics().stringAdvanceMcPixels(text);
 }
 ```
 
 > [!TIP]
-> Call `MinecraftFont.REGULAR.glyph(codepoint)` directly if you need per-glyph bitmaps (e.g. for a custom layout engine). The glyph cache is thread-safe and lazily populated via `ConcurrentMap#computeIfAbsent`.
+> Call `MinecraftFont.Vanilla.REGULAR.glyph(codepoint)` directly if you need per-glyph bitmaps (e.g. for a custom layout engine). The glyph cache is thread-safe and lazily populated via `ConcurrentMap#computeIfAbsent`.
 
 ## Fonts
 
@@ -151,7 +157,7 @@ On first use, `MinecraftFont` resolves each OTF in priority order:
 2. **Module cache** - `cache/fonts/Minecraft-*.otf`
 3. **On-demand generation** - invokes `ToolingFonts` to clone the generator and produce the OTFs into `cache/fonts/` (version driven by `MinecraftFont.DEFAULT_VERSION`)
 
-This means downstream consumers can depend on `minecraft-text` without shipping any font assets - the first `MinecraftFont.REGULAR.glyph(...)` call transparently produces them.
+This means downstream consumers can depend on `minecraft-text` without shipping any font assets - the first `MinecraftFont.Vanilla.REGULAR.glyph(...)` call transparently produces them.
 
 > [!IMPORTANT]
 > The runtime bootstrap requires `git` and Python 3.10+ on the host's `PATH`. In sealed environments (e.g. production Docker images) you should run the [build-time generation](#build-time-generation) during image build and ship the OTFs on the classpath instead.
@@ -192,7 +198,7 @@ You can skip the first step if you are only working on code paths that do not ex
 
 | Package | Purpose |
 |---------|---------|
-| `lib.minecraft.text` | Top-level model - `ChatColor`, `ChatFormat`, `TextSegment`, `LineSegment`, `ColorSegment` |
+| `lib.minecraft.text` | Top-level model - `ChatColor`, `ChatFormat`, `TextSegment`, `LineSegment` |
 | `lib.minecraft.text.event` | `ClickEvent`, `HoverEvent` payloads with Gson (de)serialization |
 | `lib.minecraft.text.font` | `MinecraftFont`, `MinecraftFontMetrics`, `MinecraftGraphics` - OTF loading and glyph rendering |
 | `lib.minecraft.text.tooling` | `ToolingFonts` - Gradle/runtime-invoked wrapper around the Python font generator |
@@ -201,23 +207,22 @@ You can skip the first step if you are only working on code paths that do not ex
 
 ### Segment Model
 
-A Minecraft chat line is modelled as a list of styled text runs rather than a recursive tree. Three classes cover the full surface area:
+A Minecraft chat line is modelled as a list of styled text runs. Two classes cover the surface area:
 
 ```
-ColorSegment                                # styled text run
-  ├── text         (String)
+TextSegment                                 # styled text run + interaction events + siblings
+  ├── contents     (TextContents)
   ├── color        (Optional<ChatColor>)
-  └── bold / italic / underlined / obfuscated / strikethrough (boolean)
-
-TextSegment extends ColorSegment            # run + interaction events
+  ├── bold / italic / underlined / obfuscated / strikethrough (Optional<Boolean>)
   ├── clickEvent   (Optional<ClickEvent>)
-  └── hoverEvent   (Optional<HoverEvent>)
+  ├── hoverEvent   (Optional<HoverEvent>)
+  └── extra        (List<TextSegment>)
 
 LineSegment                                 # an ordered list of runs
-  └── segments     (ConcurrentList<ColorSegment>)
+  └── segments     (ConcurrentList<TextSegment>)
 ```
 
-`ColorSegment.fromLegacy(String)` and `LineSegment.fromLegacy(String, char)` parse legacy section-symbol strings (`§6...§l...` or a user-chosen substitute) into the model. `TextSegment#toJson` emits the wire-format `JsonObject`; `TextSegment.fromJson` round-trips it back. `MinecraftGraphics` draws the resulting runs one at a time, picking a font variant via `ColorSegment#fontStyle`.
+`TextSegment.fromLegacy(String)` and `LineSegment.fromLegacy(String, char)` parse legacy section-symbol strings (`§6...§l...` or a user-chosen substitute) into the model, and `TextSegment#toLines` flattens a segment and its siblings into lines of runs. `TextSegment#toJson` emits the wire-format `JsonElement`; `TextSegment.fromJson` round-trips it back. `MinecraftGraphics` draws the resulting runs one at a time, picking a font variant via `TextSegment#fontStyle`.
 
 ### Glyph Rendering
 
@@ -239,7 +244,6 @@ minecraft-text/
 │   │   ├── ChatFormat.java          # Bold/italic/etc. enum
 │   │   ├── TextSegment.java         # Recursive segment model
 │   │   ├── LineSegment.java         # Flattened same-style runs
-│   │   ├── ColorSegment.java        # Draw-ready segment
 │   │   ├── event/
 │   │   │   ├── ClickEvent.java
 │   │   │   └── HoverEvent.java

@@ -15,6 +15,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThan;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,6 +24,23 @@ class MinecraftGlyphVectorTest {
 
     private static String cp(int codepoint) {
         return new String(Character.toChars(codepoint));
+    }
+
+    /**
+     * Asserts two buffers hold the same pixels everywhere and counts the painted ones.
+     *
+     * @param actual the buffer under test
+     * @param expected the reference buffer
+     * @return the number of pixels with a non-zero alpha
+     */
+    private static int paintedMatching(PixelBuffer actual, PixelBuffer expected) {
+        int painted = 0;
+        for (int y = 0; y < expected.height(); y++)
+            for (int x = 0; x < expected.width(); x++) {
+                assertThat("pixel (" + x + "," + y + ")", actual.getPixel(x, y), is(expected.getPixel(x, y)));
+                if ((actual.getPixel(x, y) >>> 24) != 0) painted++;
+            }
+        return painted;
     }
 
     @Test
@@ -201,19 +219,21 @@ class MinecraftGlyphVectorTest {
     }
 
     @Test
-    @DisplayName("regression: Java2D zeroes GlyphVector advances for an sbix font - our layout must not trust them")
-    void glyphVectorAdvanceIsZeroRegression() throws Exception {
+    @DisplayName("regression: Java2D's GlyphVector advance for an sbix glyph is a fraction of a pixel - our layout must not trust it")
+    void glyphVectorAdvanceIsNotTheSidecarWidth() throws Exception {
         Font awtFont = Font.createFont(Font.TRUETYPE_FONT,
             new java.io.ByteArrayInputStream(ColorFontFixtures.bytes(ColorFontFixtures.MERGED_TTF))).deriveFont(16.0f);
         FontRenderContext frc = new FontRenderContext(new AffineTransform(), true, true);
-        GlyphVector awt = awtFont.createGlyphVector(frc, cp(ColorFontFixtures.CP_FLAT).repeat(3));
+        int stored = 0xF0001;   // demo E001's stored codepoint in the merged font; E001 itself maps to .notdef there
+        GlyphVector awt = awtFont.createGlyphVector(frc, cp(stored).repeat(3));
+        assertThat("Java2D resolves the stored codepoint to demo E001's glyph", awt.getGlyphCode(0), is(ColorFontFixtures.GID_FLAT));
         double awtAdvance = awt.getGlyphPosition(awt.getNumGlyphs()).getX();
 
         MinecraftGlyphVector ours = ColorFontFixtures.demoFont().layout(cp(ColorFontFixtures.CP_FLAT).repeat(3));
 
-        // The AWT advance is zeroed by sbix; our sidecar-driven advance is the real width.
-        assertThat(awtAdvance, is(0.0));
-        assertThat(ours.advanceX(), greaterThan(0.0));
+        // Java2D answers a fraction of a pixel for three sbix glyphs; the sidecar's advance is three 16 px ems.
+        assertThat(awtAdvance, lessThan(1.0));
+        assertThat(ours.advanceX(), is(48.0));
     }
 
     @Test
@@ -255,6 +275,121 @@ class MinecraftGlyphVectorTest {
                 if ((viaDrawString.getPixel(x, y) >>> 24) != 0) painted++;
             }
         assertThat("the run actually painted glyphs", painted, greaterThan(0));
+    }
+
+    @Test
+    @DisplayName("drawString at a half-mcPixel origin lands one output pixel from the whole-mcPixel origin")
+    void drawStringAtHalfMcPixel() {
+        PixelBuffer half = PixelBuffer.create(64, 32);
+        half.fill(0);
+        MinecraftGraphics g1 = new MinecraftGraphics(half);
+        g1.setColor(Color.WHITE);
+        g1.drawString("Hi", 1.5f, 10.5f);
+
+        PixelBuffer shifted = PixelBuffer.create(64, 32);
+        shifted.fill(0);
+        MinecraftGraphics g2 = new MinecraftGraphics(shifted);
+        g2.setColor(Color.WHITE);
+        g2.translate(1, 1);   // one output pixel each way
+        g2.drawString("Hi", 1, 10);
+
+        assertThat("the run actually painted glyphs", paintedMatching(half, shifted), greaterThan(0));
+    }
+
+    @Test
+    @DisplayName("drawGlyphVector at a half-mcPixel origin lands one output pixel from the whole-mcPixel origin")
+    void drawGlyphVectorAtHalfMcPixel() {
+        MinecraftGlyphVector vector = MinecraftFont.Vanilla.REGULAR.layout("Hi");
+
+        PixelBuffer half = PixelBuffer.create(64, 32);
+        half.fill(0);
+        MinecraftGraphics g1 = new MinecraftGraphics(half);
+        g1.setColor(Color.WHITE);
+        g1.drawGlyphVector((GlyphVector) vector, 1.5f, 10.5f);
+
+        PixelBuffer shifted = PixelBuffer.create(64, 32);
+        shifted.fill(0);
+        MinecraftGraphics g2 = new MinecraftGraphics(shifted);
+        g2.translate(1, 1);   // one output pixel each way
+        vector.paint(g2, 1, 10, Color.WHITE);
+
+        assertThat("the run actually painted glyphs", paintedMatching(half, shifted), greaterThan(0));
+    }
+
+    @Test
+    @DisplayName("a run drawn at another's mcPixel width continues its pen, half pixel included")
+    void nextRunContinuesThePen() {
+        MinecraftFont.Color font = ColorFontFixtures.demoFont();
+        String head = cp(ColorFontFixtures.CP_FLAT) + cp(ColorFontFixtures.CP_FRAC_SPACE).repeat(2);   // 16 + 1.5 + 1.5 = 19 output px
+        String tail = cp(ColorFontFixtures.CP_FLAT);
+        float headMcPx = font.metrics().stringAdvanceMcPixels(head);
+        assertThat(headMcPx, is(9.5f));
+
+        PixelBuffer joined = PixelBuffer.create(48, 16);
+        joined.fill(0);
+        MinecraftGraphics g1 = new MinecraftGraphics(joined);
+        g1.setFont(font);
+        g1.setColor(Color.WHITE);
+        g1.drawString(head + tail, 0f, 0f);
+
+        PixelBuffer split = PixelBuffer.create(48, 16);
+        split.fill(0);
+        MinecraftGraphics g2 = new MinecraftGraphics(split);
+        g2.setFont(font);
+        g2.setColor(Color.WHITE);
+        g2.drawString(head, 0f, 0f);
+        g2.drawString(tail, headMcPx, 0f);
+
+        assertThat("the runs actually painted glyphs", paintedMatching(split, joined), greaterThan(0));
+        assertThat("the tail's strike top-left sits at the head's 19 output px", split.getPixel(19, 0), is(0xFFDC2828));
+    }
+
+    @Test
+    @DisplayName("a run split at a quarter mcPixel lands where the joined run does - origin and pen round once, together")
+    void splitAtQuarterMcPixelRoundsOnce() {
+        MinecraftFont.Color font = ColorFontFixtures.demoFont();
+        String head = cp(ColorFontFixtures.CP_FLAT) + cp(ColorFontFixtures.CP_FRAC_SPACE);   // 16 + 1.5 = 17.5 output px
+        String tail = cp(ColorFontFixtures.CP_FRAC_SPACE) + cp(ColorFontFixtures.CP_FLAT);   // the strike's pen is 1.5
+        float headMcPx = font.metrics().stringAdvanceMcPixels(head);
+        assertThat(headMcPx, is(8.75f));
+
+        PixelBuffer joined = PixelBuffer.create(48, 16);
+        joined.fill(0);
+        MinecraftGraphics g1 = new MinecraftGraphics(joined);
+        g1.setFont(font);
+        g1.setColor(Color.WHITE);
+        g1.drawString(head + tail, 0f, 0f);
+
+        PixelBuffer viaDraw = PixelBuffer.create(48, 16);
+        viaDraw.fill(0);
+        MinecraftGraphics g2 = new MinecraftGraphics(viaDraw);
+        g2.setFont(font);
+        g2.setColor(Color.WHITE);
+        g2.drawString(head, 0f, 0f);
+        g2.drawString(tail, headMcPx, 0f);
+
+        PixelBuffer viaVector = PixelBuffer.create(48, 16);
+        viaVector.fill(0);
+        MinecraftGraphics g3 = new MinecraftGraphics(viaVector);
+        g3.drawGlyphVector(font.layout(head), 0f, 0f, Color.WHITE);
+        g3.drawGlyphVector(font.layout(tail), headMcPx, 0f, Color.WHITE);
+
+        // One rounding puts the tail's strike at round(17.5 + 1.5) = 19; rounding origin and pen apart
+        // puts it at round(17.5) + round(1.5) = 20.
+        assertThat("drawString: the runs actually painted glyphs", paintedMatching(viaDraw, joined), greaterThan(0));
+        assertThat("drawGlyphVector: the runs actually painted glyphs", paintedMatching(viaVector, joined), greaterThan(0));
+        assertThat("the tail's strike top-left sits at 19 output px", viaDraw.getPixel(19, 0), is(0xFFDC2828));
+        assertThat("nothing left of the tail's strike", viaDraw.getPixel(18, 0), is(0));
+    }
+
+    @Test
+    @DisplayName("stringAdvanceMcPixels walks codepoints, so a surrogate pair is one glyph")
+    void stringAdvanceMcPixelsWalksCodepoints() {
+        MinecraftFont font = MinecraftFont.Vanilla.REGULAR;
+        int astral = 0x1D400;   // MATHEMATICAL BOLD CAPITAL A, a surrogate pair in UTF-16
+        String pair = new String(Character.toChars(astral));
+        assertThat(pair.length(), is(2));
+        assertThat(font.metrics().stringAdvanceMcPixels(pair), is(font.glyph(astral).advanceWidth() / 2f));
     }
 
     @Test
