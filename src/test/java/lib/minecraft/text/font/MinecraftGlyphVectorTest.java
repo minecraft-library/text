@@ -15,6 +15,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThan;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -218,19 +219,21 @@ class MinecraftGlyphVectorTest {
     }
 
     @Test
-    @DisplayName("regression: Java2D zeroes GlyphVector advances for an sbix font - our layout must not trust them")
-    void glyphVectorAdvanceIsZeroRegression() throws Exception {
+    @DisplayName("regression: Java2D's GlyphVector advance for an sbix glyph is a fraction of a pixel - our layout must not trust it")
+    void glyphVectorAdvanceIsNotTheSidecarWidth() throws Exception {
         Font awtFont = Font.createFont(Font.TRUETYPE_FONT,
             new java.io.ByteArrayInputStream(ColorFontFixtures.bytes(ColorFontFixtures.MERGED_TTF))).deriveFont(16.0f);
         FontRenderContext frc = new FontRenderContext(new AffineTransform(), true, true);
-        GlyphVector awt = awtFont.createGlyphVector(frc, cp(ColorFontFixtures.CP_FLAT).repeat(3));
+        int stored = 0xF0001;   // demo E001's stored codepoint in the merged font; E001 itself maps to .notdef there
+        GlyphVector awt = awtFont.createGlyphVector(frc, cp(stored).repeat(3));
+        assertThat("Java2D resolves the stored codepoint to demo E001's glyph", awt.getGlyphCode(0), is(ColorFontFixtures.GID_FLAT));
         double awtAdvance = awt.getGlyphPosition(awt.getNumGlyphs()).getX();
 
         MinecraftGlyphVector ours = ColorFontFixtures.demoFont().layout(cp(ColorFontFixtures.CP_FLAT).repeat(3));
 
-        // The AWT advance is zeroed by sbix; our sidecar-driven advance is the real width.
-        assertThat(awtAdvance, is(0.0));
-        assertThat(ours.advanceX(), greaterThan(0.0));
+        // Java2D answers a fraction of a pixel for three sbix glyphs; the sidecar's advance is three 16 px ems.
+        assertThat(awtAdvance, lessThan(1.0));
+        assertThat(ours.advanceX(), is(48.0));
     }
 
     @Test
