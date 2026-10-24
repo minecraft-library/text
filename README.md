@@ -117,29 +117,35 @@ LineSegment parsed = ColorSegment.fromLegacy("&6Hello, &lworld!");
 Render a line to a `PixelBuffer`:
 
 ```java
-import dev.simplified.image.pixel.PixelBuffer;
+import dev.simplified.image.PixelBuffer;
+import lib.minecraft.text.LineSegment;
+import lib.minecraft.text.TextSegment;
 import lib.minecraft.text.font.MinecraftFont;
 import lib.minecraft.text.font.MinecraftGraphics;
+
+LineSegment line = TextSegment.fromLegacy("&6Hello, &lworld!");
 
 // Output buffer is sized in native render pixels (mcPixels * MC_PIXEL_SCALE).
 PixelBuffer buffer = PixelBuffer.create(256, 32);
 MinecraftGraphics gfx = new MinecraftGraphics(buffer);
 
-// drawString takes mcPixel coordinates; the baseline convention matches AWT.
-int cursorXMcPx = 0;
-int baselineYMcPx = MinecraftFont.REGULAR.getFontMetrics().getAscentMcPixels();
+// drawString takes mcPixel coordinates; the baseline convention matches AWT. The pen is a float,
+// as the client's is: a run's width can end on half an mcPixel, and the next run starts there.
+float cursorXMcPx = 0;
+int baselineYMcPx = MinecraftFont.Vanilla.REGULAR.metrics().getAscentMcPixels();
 
-for (ColorSegment segment : line.getSegments()) {
+for (TextSegment segment : line.getSegments()) {
+    String text = segment.getText();
+    MinecraftFont font = MinecraftFont.Vanilla.of(segment.fontStyle());
     segment.getColor().ifPresent(c -> gfx.setColor(c.color()));
-    gfx.setFont(MinecraftFont.of(segment.fontStyle()));
-    gfx.drawString(segment.getText(), cursorXMcPx, baselineYMcPx);
-    // Font metrics return native-pixel advances; divide back into mcPixel space.
-    cursorXMcPx += gfx.getFontMetrics().stringWidth(segment.getText()) / MinecraftFont.MC_PIXEL_SCALE;
+    gfx.setFont(font);
+    gfx.drawString(text, cursorXMcPx, baselineYMcPx);
+    cursorXMcPx += font.metrics().stringAdvanceMcPixels(text);
 }
 ```
 
 > [!TIP]
-> Call `MinecraftFont.REGULAR.glyph(codepoint)` directly if you need per-glyph bitmaps (e.g. for a custom layout engine). The glyph cache is thread-safe and lazily populated via `ConcurrentMap#computeIfAbsent`.
+> Call `MinecraftFont.Vanilla.REGULAR.glyph(codepoint)` directly if you need per-glyph bitmaps (e.g. for a custom layout engine). The glyph cache is thread-safe and lazily populated via `ConcurrentMap#computeIfAbsent`.
 
 ## Fonts
 

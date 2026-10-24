@@ -263,13 +263,23 @@ class MinecraftGlyphVectorExtensionTest {
             for (int x = 0; x < 96; x++)
                 assertThat("pixel (" + x + "," + y + ")", viaDraw.getPixel(x, y), is(viaPaint.getPixel(x, y)));
 
-        // And the raster glyph's untinted ink lands exactly at the buffer column the walk pen predicts.
+        // And the raster glyph's untinted top-left lands exactly at the buffer column the walk pen predicts.
+        // That pen is A's advance plus the fixture's 1.5 px space, a tie the blit rounds half up.
+        double rasterPen = vector.positionedGlyph(2).penX();
+        assertThat("the raster pen sits on half an output pixel", rasterPen % 1.0, is(0.5));
         int cx = 1 * MinecraftFont.MC_PIXEL_SCALE;
-        int rasterCol = cx + (int) Math.round(vector.positionedGlyph(2).penX());
-        boolean rasterInkAtWalkColumn = false;
-        for (int y = 0; y < 48; y++)
-            if (viaDraw.getPixel(rasterCol, y) == 0xFFDC2828) { rasterInkAtWalkColumn = true; break; }
-        assertTrue(rasterInkAtWalkColumn, "the raster glyph's ink lands at the walk-predicted column " + rasterCol);
+        int rasterCol = cx + (int) Math.round(rasterPen);
+        int strikeTop = -1;
+        for (int y = 0; y < 48 && strikeTop < 0; y++)
+            for (int x = 0; x < 96; x++)
+                if (viaDraw.getPixel(x, y) == 0xFFDC2828) {
+                    strikeTop = y;
+                    break;
+                }
+        assertTrue(strikeTop >= 0, "the raster glyph painted its strike");
+        assertThat("the strike's top-left lands at the walk-predicted column " + rasterCol,
+            viaDraw.getPixel(rasterCol, strikeTop), is(0xFFDC2828));
+        assertThat("nothing left of the strike's top-left", viaDraw.getPixel(rasterCol - 1, strikeTop), is(0));
     }
 
 }

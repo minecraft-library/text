@@ -1,8 +1,8 @@
 package lib.minecraft.text.font;
 
+import dev.simplified.image.PixelBuffer;
 import dev.simplified.image.pixel.BlendMode;
 import dev.simplified.image.pixel.ColorMath;
-import dev.simplified.image.PixelBuffer;
 import dev.simplified.image.pixel.PixelGraphics;
 import lib.minecraft.text.TextSegment;
 import org.jetbrains.annotations.NotNull;
@@ -12,8 +12,11 @@ import java.awt.font.GlyphVector;
 
 /**
  * A {@link PixelGraphics} subclass that renders {@link MinecraftFont} glyphs directly into a
- * {@link PixelBuffer}. Callers pass glyph origins in logical mcPixel space; the graphics applies
- * the {@code mcPixel -> output-pixel} conversion via {@link MinecraftFont#MC_PIXEL_SCALE}.
+ * {@link PixelBuffer}. Glyph origins are mcPixels, fractional where a run starts after another, as
+ * the client keeps its pen as a float in GUI pixels. The {@code mcPixel -> output-pixel} conversion
+ * via {@link MinecraftFont#MC_PIXEL_SCALE} happens only at the blit, with one rounding per glyph of
+ * origin plus pen - see {@link #drawString(String, float, float)}. The inherited rectangle, image,
+ * clip and translate forms stay in output pixels.
  * <p>
  * Rendering is always at the font's native rasterization (no glyph pixel replication). Callers
  * that need a larger glyph for GUI-density use cases (e.g. stack counts on a hi-res icon)
@@ -49,9 +52,8 @@ public class MinecraftGraphics extends PixelGraphics {
     // --- text rendering ---
 
     /**
-     * Draws a string at the given mcPixel origin. The baseline sits at {@code yMcPx}; the
-     * cursor starts at {@code xMcPx}. Both are converted to buffer coordinates via
-     * {@code mcPx * MinecraftFont.MC_PIXEL_SCALE}.
+     * Draws a string at the given whole mcPixel origin, exactly where
+     * {@link #drawString(String, float, float)} draws the same values.
      *
      * @param str the text to draw
      * @param xMcPx the starting cursor X in mcPixels
@@ -59,13 +61,41 @@ public class MinecraftGraphics extends PixelGraphics {
      */
     @Override
     public void drawString(@NotNull String str, int xMcPx, int yMcPx) {
+        drawString(str, (float) xMcPx, (float) yMcPx);
+    }
+
+    /**
+     * Draws a string at the given mcPixel origin with its fraction kept. The baseline sits at
+     * {@code yMcPx}; the cursor starts at {@code xMcPx}. The origin is converted to buffer coordinates
+     * via {@code mcPx * MinecraftFont.MC_PIXEL_SCALE} under the translation and left unrounded; each
+     * glyph's buffer X is that origin plus the glyph's pen, rounded once, half up, at the blit. A run
+     * drawn at another's origin plus {@link MinecraftFontMetrics#stringAdvanceMcPixels(String) its width}
+     * therefore lands every glyph where the joined run does.
+     *
+     * @param str the text to draw
+     * @param xMcPx the starting cursor X in mcPixels
+     * @param yMcPx the baseline Y in mcPixels
+     */
+    @Override
+    public void drawString(@NotNull String str, float xMcPx, float yMcPx) {
         if (str.isEmpty()) return;
-        int pxPerMcPx = MinecraftFont.MC_PIXEL_SCALE;
-        int cx = translateX() + xMcPx * pxPerMcPx;
-        int cy = translateY() + yMcPx * pxPerMcPx;
+        double originX = toBuffer(translateX(), xMcPx);
+        int cy = (int) Math.round(toBuffer(translateY(), yMcPx));
         int fillArgb = getColor().getRGB();
         // Drive the shared advance walk directly - no MinecraftGlyphVector/list allocation on the hot path.
-        this.currentMcFont.walk(str, (glyph, penX) -> blitGlyph(glyph, cx + (int) Math.round(penX), cy, fillArgb));
+        this.currentMcFont.walk(str, (glyph, penX) -> blitGlyph(glyph, (int) Math.round(originX + penX), cy, fillArgb));
+    }
+
+    /**
+     * Converts an mcPixel coordinate to an unrounded buffer coordinate under a translation, so a
+     * glyph's pen joins it before the one rounding at the blit.
+     *
+     * @param translate the translation in output pixels
+     * @param mcPx the coordinate in mcPixels
+     * @return the buffer coordinate in output pixels, unrounded
+     */
+    private static double toBuffer(int translate, float mcPx) {
+        return translate + (double) mcPx * MinecraftFont.MC_PIXEL_SCALE;
     }
 
     /**
@@ -141,7 +171,8 @@ public class MinecraftGraphics extends PixelGraphics {
      * implementation is rejected with {@link IllegalArgumentException} rather than silently
      * mis-rendered: real AWT would reduce it to bare glyph codes and drop both the pack positions and
      * the pack pixels (measured - see {@link MinecraftGlyphVector}). {@code x} and {@code y} are read
-     * as the mcPixel origin, matching {@link #drawString}, and the current colour tints mono glyphs.
+     * as the mcPixel origin, matching {@link #drawString}, and keep their fraction to the blit, as
+     * {@link #drawString(String, float, float)} does; the current colour tints mono glyphs.
      *
      * @param g the glyph vector, which must be a {@link MinecraftGlyphVector}
      * @param x the run origin X in mcPixels
@@ -155,11 +186,12 @@ public class MinecraftGraphics extends PixelGraphics {
                 "MinecraftGraphics can only draw a MinecraftGlyphVector; a foreign GlyphVector ("
                     + g.getClass().getName() + ") carries no pack strike bitmaps, and AWT would reduce it to glyph "
                     + "codes, dropping the pack layout. Lay text out via MinecraftFont.layout(String).");
-        drawGlyphVector(vector, Math.round(x), Math.round(y), getColor());
+        drawGlyphVector(vector, x, y, getColor());
     }
 
     /**
-     * Paints a {@link MinecraftGlyphVector} at an mcPixel origin.
+     * Paints a {@link MinecraftGlyphVector} at an mcPixel origin with its fraction kept, rounding
+     * each glyph's origin plus pen once at the blit, as {@link #drawString(String, float, float)} does.
      * <p>
      * Raster glyphs blit their native {@code sbix} strike (untinted); mono fallback glyphs are
      * tinted by {@code fill}; space glyphs paint nothing. Pen positions come from the vector's
@@ -170,15 +202,14 @@ public class MinecraftGraphics extends PixelGraphics {
      * @param yMcPx the run origin Y in mcPixels (baseline for mono glyphs)
      * @param fill the tint applied to mono glyphs
      */
-    public void drawGlyphVector(@NotNull MinecraftGlyphVector vector, int xMcPx, int yMcPx, @NotNull Color fill) {
-        int pxPerMcPx = MinecraftFont.MC_PIXEL_SCALE;
-        int cx = translateX() + xMcPx * pxPerMcPx;
-        int cy = translateY() + yMcPx * pxPerMcPx;
+    public void drawGlyphVector(@NotNull MinecraftGlyphVector vector, float xMcPx, float yMcPx, @NotNull Color fill) {
+        double originX = toBuffer(translateX(), xMcPx);
+        int cy = (int) Math.round(toBuffer(translateY(), yMcPx));
         int fillArgb = fill.getRGB();
 
         for (int i = 0; i < vector.glyphCount(); i++) {
             MinecraftGlyph glyph = vector.positionedGlyph(i);
-            blitGlyph(glyph, cx + (int) Math.round(glyph.penX()), cy, fillArgb);   // blitGlyph no-ops on SPACE
+            blitGlyph(glyph, (int) Math.round(originX + glyph.penX()), cy, fillArgb);   // blitGlyph no-ops on SPACE
         }
     }
 
