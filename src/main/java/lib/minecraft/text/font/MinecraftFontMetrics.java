@@ -95,6 +95,18 @@ public final class MinecraftFontMetrics extends FontMetrics {
         return (float) (stringAdvanceX(text) / MinecraftFont.MC_PIXEL_SCALE);
     }
 
+    /**
+     * Measures a string's width in whole mcPixels, as the client's {@code Font#width} does - the
+     * {@linkplain #stringAdvanceMcPixels(String) advance} rounded up, so a run ending on half an
+     * mcPixel is answered the whole mcPixel it reaches into.
+     *
+     * @param text the text to measure
+     * @return the width in whole mcPixels
+     */
+    public int stringWidthMcPixels(@NotNull String text) {
+        return (int) Math.ceil(stringAdvanceMcPixels(text));
+    }
+
     @Override
     public int stringWidth(@NotNull String str) {
         return Math.round((float) stringAdvanceX(str));

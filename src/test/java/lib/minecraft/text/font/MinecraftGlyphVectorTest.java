@@ -393,6 +393,20 @@ class MinecraftGlyphVectorTest {
     }
 
     @Test
+    @DisplayName("stringWidthMcPixels rounds a run ending on half an mcPixel up, as the client's Font#width does")
+    void stringWidthMcPixelsRoundsUp() {
+        MinecraftFont.Color font = ColorFontFixtures.demoFont();
+        String half = cp(ColorFontFixtures.CP_FLAT) + cp(ColorFontFixtures.CP_FRAC_SPACE).repeat(2);   // 9.5 mcPx
+        String whole = cp(ColorFontFixtures.CP_FLAT);                                                  // 8 mcPx
+        assertThat(font.metrics().stringAdvanceMcPixels(half), is(9.5f));
+        String quarter = cp(ColorFontFixtures.CP_FRAC_SPACE).repeat(3);                               // 2.25 mcPx
+        assertThat(font.metrics().stringWidthMcPixels(half), is(10));
+        assertThat(font.metrics().stringWidthMcPixels(whole), is(8));
+        assertThat(font.metrics().stringAdvanceMcPixels(quarter), is(2.25f));
+        assertThat(font.metrics().stringWidthMcPixels(quarter), is(3));
+    }
+
+    @Test
     @DisplayName("a mixed mono + colour + space run paints through one layout call with zero caller branching")
     void mixedRunPaintsThroughOneCall() {
         MinecraftFont.Color font = ColorFontFixtures.demoFont();
