@@ -558,4 +558,69 @@ class MinecraftGlyphVectorTest {
         assertTrue(nativeRedRasterPixel, "expected the untinted colour glyph in the buffer");
     }
 
+    @Test
+    @DisplayName("fillEffect lays a bar given in mcPixels as a glyph pixel is laid: its colour's alpha, the text shader's cut, the translucent blend")
+    void fillEffectLaysABarAsAGlyphPixel() {
+        PixelBuffer halfRed = effectCanvas();
+        MinecraftGraphics g1 = new MinecraftGraphics(halfRed);
+        g1.setColor(new Color(0x80FF0000, true));
+        g1.fillEffect(1f, 1f, 3f, 1f);
+
+        PixelBuffer discarded = effectCanvas();
+        MinecraftGraphics g2 = new MinecraftGraphics(discarded);
+        g2.setColor(new Color(0x19FF0000, true));
+        g2.fillEffect(1f, 1f, 3f, 1f);
+
+        assertAll("a 3x1 mcPixel bar at (1, 1) over " + String.format("%08X", FILL),
+            () -> assertThat("in 0x80FF0000, the 6x2 output pixels from (2, 2)", misplaced(halfRed, new Rectangle(2, 2, 6, 2), 0xF8870007, FILL), is(empty())),
+            () -> assertThat("in 0x19FF0000, nothing", misplaced(discarded, new Rectangle(), FILL, FILL), is(empty()))
+        );
+    }
+
+    @Test
+    @DisplayName("fillEffect converts each edge under the translation and rounds it half up once, so a width is the difference of two rounded edges")
+    void fillEffectRoundsEachEdgeOnce() {
+        PixelBuffer wholeWidth = effectCanvas();
+        MinecraftGraphics g1 = new MinecraftGraphics(wholeWidth);
+        g1.setColor(new Color(0x80FF0000, true));
+        g1.translate(1, 0);
+        g1.fillEffect(0.25f, 0.5f, 1.5f, 1f);
+
+        PixelBuffer halfWidth = effectCanvas();
+        MinecraftGraphics g2 = new MinecraftGraphics(halfWidth);
+        g2.setColor(new Color(0x80FF0000, true));
+        g2.translate(1, 0);
+        g2.fillEffect(0.25f, 0.5f, 1.25f, 1f);
+
+        // Left 1 + 0.5 = 1.5 -> 2 and top 1 -> 1, bottom 1 + 2 = 3 -> 3, for both. Right 1.5 + 3 = 4.5 -> 5 for the
+        // first; 1.5 + 2.5 = 4 -> 4 for the second, where rounding the 2.5 output-pixel width alone would reach 5.
+        assertAll("a bar at (0.25, 0.5) mcPx under translate(1, 0)",
+            () -> assertThat("1.5 mcPx wide, columns 2-4 and rows 1-2", misplaced(wholeWidth, new Rectangle(2, 1, 3, 2), 0xF8870007, FILL), is(empty())),
+            () -> assertThat("1.25 mcPx wide, columns 2-3 and rows 1-2", misplaced(halfWidth, new Rectangle(2, 1, 2, 2), 0xF8870007, FILL), is(empty()))
+        );
+    }
+
+    @Test
+    @DisplayName("fillEffect honours the clip")
+    void fillEffectHonoursTheClip() {
+        PixelBuffer target = effectCanvas();
+        MinecraftGraphics graphics = new MinecraftGraphics(target);
+        graphics.setColor(new Color(0x80FF0000, true));
+        graphics.setClip(0, 0, 3, 6);   // excludes column 3 onward
+        graphics.fillEffect(1f, 1f, 3f, 1f);
+
+        assertThat(misplaced(target, new Rectangle(2, 2, 1, 2), 0xF8870007, FILL), is(empty()));
+    }
+
+    /**
+     * A 10x6 buffer holding {@link #FILL}, for a bar to be laid over.
+     *
+     * @return the buffer
+     */
+    private static PixelBuffer effectCanvas() {
+        PixelBuffer canvas = PixelBuffer.create(10, 6);
+        canvas.fill(FILL);
+        return canvas;
+    }
+
 }

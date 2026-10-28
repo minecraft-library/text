@@ -22,7 +22,8 @@ import java.awt.font.GlyphVector;
  * colour's, rounded half up once; a pixel whose alpha comes to {@link #DISCARD_ALPHA} or less is not
  * laid, as the client's text shader discards a fragment below 0.1, and any other is blended over the
  * buffer with {@link BlendMode#NORMAL}, the client's translucent blend. A colour glyph keeps its own
- * pixels, the colour reaching none of them.
+ * pixels, the colour reaching none of them. A strikethrough or underline bar, given in mcPixels to
+ * {@link #fillEffect(float, float, float, float)}, is laid by the same step at full coverage.
  * <p>
  * Rendering is always at the font's native rasterization (no glyph pixel replication). Callers
  * that need a larger glyph for GUI-density use cases (e.g. stack counts on a hi-res icon)
@@ -103,6 +104,39 @@ public class MinecraftGraphics extends PixelGraphics {
     }
 
     /**
+     * Lays a strikethrough or underline bar given in mcPixels, in the current colour. The client draws
+     * such a bar with its font's white effect glyph through the text shader, so the bar is laid as a
+     * glyph pixel covered whole: each pixel takes the colour's alpha, a colour at {@link #DISCARD_ALPHA}
+     * or less lays nothing, and any other blends over the buffer with {@link BlendMode#NORMAL}.
+     * <p>
+     * Each edge is converted to buffer coordinates via {@code mcPx * MinecraftFont.MC_PIXEL_SCALE} under
+     * the translation and rounded half up once, as a glyph's origin plus pen is in
+     * {@link #drawString(String, float, float)}, so the bar's width and height are the differences of its
+     * rounded edges. The clip is honoured as it is for a glyph. The inherited
+     * {@link #fillRect(int, int, int, int)} stays in output pixels and overwrites what it covers.
+     *
+     * @param xMcPx the left edge in mcPixels
+     * @param yMcPx the top edge in mcPixels
+     * @param widthMcPx the width in mcPixels
+     * @param heightMcPx the height in mcPixels
+     */
+    public void fillEffect(float xMcPx, float yMcPx, float widthMcPx, float heightMcPx) {
+        double left = toBuffer(translateX(), xMcPx);
+        double top = toBuffer(translateY(), yMcPx);
+        Rectangle area = drawableArea();
+        int x0 = Math.max((int) Math.round(left), area.x);
+        int y0 = Math.max((int) Math.round(top), area.y);
+        int x1 = Math.min((int) Math.round(left + (double) widthMcPx * MinecraftFont.MC_PIXEL_SCALE), area.x + area.width);
+        int y1 = Math.min((int) Math.round(top + (double) heightMcPx * MinecraftFont.MC_PIXEL_SCALE), area.y + area.height);
+        int argb = getColor().getRGB();
+        PixelBuffer target = target();
+
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+                layTextPixel(target, x, y, 255, argb);
+    }
+
+    /**
      * Converts an mcPixel coordinate to an unrounded buffer coordinate under a translation, so a
      * glyph's pen joins it before the one rounding at the blit.
      *
@@ -139,14 +173,12 @@ public class MinecraftGraphics extends PixelGraphics {
         int gx = x + glyph.bearingX();
         int gy = y + glyph.bearingY();
         PixelBuffer target = target();
-        int tw = target.width();
-        int th = target.height();
 
-        Shape clipShape = getClip();
-        int clipX0 = clipShape instanceof Rectangle c ? c.x : 0;
-        int clipY0 = clipShape instanceof Rectangle c ? c.y : 0;
-        int clipX1 = clipShape instanceof Rectangle c ? c.x + c.width : tw;
-        int clipY1 = clipShape instanceof Rectangle c ? c.y + c.height : th;
+        Rectangle area = drawableArea();
+        int clipX0 = area.x;
+        int clipY0 = area.y;
+        int clipX1 = area.x + area.width;
+        int clipY1 = area.y + area.height;
 
         for (int by = 0; by < bh; by++) {
             int py = gy + by;
@@ -164,6 +196,18 @@ public class MinecraftGraphics extends PixelGraphics {
                     layTextPixel(target, px, py, alpha, tintArgb);
             }
         }
+    }
+
+    /**
+     * The buffer pixels a glyph or a bar may be laid on: the clip, read in buffer pixels, cut to the
+     * target, or the whole target when no clip is set.
+     *
+     * @return the writable area in buffer pixels, empty when the clip misses the target
+     */
+    private @NotNull Rectangle drawableArea() {
+        PixelBuffer target = target();
+        Rectangle whole = new Rectangle(target.width(), target.height());
+        return getClip() instanceof Rectangle clip ? whole.intersection(clip) : whole;
     }
 
     /**
