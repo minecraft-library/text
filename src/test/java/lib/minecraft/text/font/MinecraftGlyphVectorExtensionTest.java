@@ -175,7 +175,7 @@ class MinecraftGlyphVectorExtensionTest {
         MinecraftFont.Vanilla regular = MinecraftFont.Vanilla.REGULAR;
         MinecraftFont.Vanilla italic = MinecraftFont.Vanilla.ITALIC;
         assertAll("runs answer the pixels drawString lays down",
-            () -> assertThat("half pen", bounds(colour.layout(halfPen).getVisualBounds()), is(drawnBounds(colour, halfPen))),
+            () -> assertThat("half pen", bounds(colour.layout(halfPen).getVisualBounds()), is(drawnBounds(colour, halfPen, Color.WHITE))),
             () -> assertThat("' '", bounds(regular.layout(" ").getVisualBounds()), is(EMPTY)),
             () -> assertThat("'   '", bounds(regular.layout("   ").getVisualBounds()), is(EMPTY)),
             () -> assertThat("'a'", bounds(regular.layout("a").getVisualBounds()), is(rect(0, -10, 10, 10))),
@@ -188,7 +188,7 @@ class MinecraftGlyphVectorExtensionTest {
     }
 
     @Test
-    @DisplayName("getVisualBounds of every printable ASCII run in the four vanilla styles is the bounds drawString paints")
+    @DisplayName("getVisualBounds of every printable ASCII run in the four vanilla styles is the bounds drawString paints in any colour the text shader keeps, and a colour it discards paints nothing")
     void visualBoundsAreTheDrawnPixels() {
         StringBuilder printable = new StringBuilder();
         for (int c = 32; c <= 126; c++) printable.append((char) c);
@@ -206,19 +206,31 @@ class MinecraftGlyphVectorExtensionTest {
             MinecraftFont.Vanilla.REGULAR, MinecraftFont.Vanilla.BOLD,
             MinecraftFont.Vanilla.ITALIC, MinecraftFont.Vanilla.BOLD_ITALIC
         };
+        // A vanilla glyph's texels are opaque or clear, so the faintest colour the client lays draws every one
+        // and the strongest it discards draws none.
+        Color faintestLaid = new Color(0x1AFFFFFF, true);
+        Color strongestDiscarded = new Color(0x19FFFFFF, true);
         List<String> mismatches = new ArrayList<>();
+        List<String> undiscarded = new ArrayList<>();
         for (MinecraftFont.Vanilla style : styles) {
             for (String run : runs) {
                 Rectangle2D visual = bounds(style.layout(run).getVisualBounds());
-                Rectangle2D drawn = drawnBounds(style, run);
+                Rectangle2D drawn = drawnBounds(style, run, faintestLaid);
                 if (!visual.equals(drawn))
                     mismatches.add(style + " '" + run + "' visual " + visual + " drawn " + drawn);
+                Rectangle2D discarded = drawnBounds(style, run, strongestDiscarded);
+                if (!discarded.equals(EMPTY))
+                    undiscarded.add(style + " '" + run + "' drawn " + discarded);
             }
         }
 
         int total = styles.length * runs.size();
-        assertTrue(mismatches.isEmpty(), mismatches.size() + " of " + total + " runs differ from the drawn pixels, first: "
-            + mismatches.subList(0, Math.min(4, mismatches.size())));
+        assertAll("every run against the pixels drawString lays",
+            () -> assertTrue(mismatches.isEmpty(), mismatches.size() + " of " + total + " runs in 0x1AFFFFFF differ from the drawn pixels, first: "
+                + mismatches.subList(0, Math.min(4, mismatches.size()))),
+            () -> assertTrue(undiscarded.isEmpty(), undiscarded.size() + " of " + total + " runs in 0x19FFFFFF drew a pixel, first: "
+                + undiscarded.subList(0, Math.min(4, undiscarded.size())))
+        );
     }
 
     @Test
@@ -258,17 +270,17 @@ class MinecraftGlyphVectorExtensionTest {
     }
 
     /**
-     * Draws a run through {@link MinecraftGraphics#drawString(String, int, int)} at a zero origin onto a clear
-     * canvas and answers the {@link PixelBuffer#opaqueBounds() non-transparent bounds} about that origin, or
-     * {@link #EMPTY} when nothing is drawn.
+     * Draws a run in a colour through {@link MinecraftGraphics#drawString(String, int, int)} at a zero origin onto
+     * a clear canvas and answers the {@link PixelBuffer#opaqueBounds() non-transparent bounds} about that origin,
+     * or {@link #EMPTY} when nothing is drawn.
      */
-    private static @NotNull Rectangle2D drawnBounds(@NotNull MinecraftFont font, @NotNull String text) {
+    private static @NotNull Rectangle2D drawnBounds(@NotNull MinecraftFont font, @NotNull String text, @NotNull Color colour) {
         int margin = 64;
         int width = (int) Math.ceil(Math.abs(font.layout(text).advanceX())) + 2 * margin;
         PixelBuffer canvas = PixelBuffer.create(width, 2 * margin);
         MinecraftGraphics graphics = new MinecraftGraphics(canvas);
         graphics.setFont(font);
-        graphics.setColor(Color.WHITE);
+        graphics.setColor(colour);
         graphics.translate(margin, margin);
         graphics.drawString(text, 0, 0);
 

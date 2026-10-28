@@ -99,15 +99,17 @@ public final class MinecraftGlyphVector extends GlyphVector {
     }
 
     /**
-     * Paints the run at an mcPixel origin. Raster glyphs blit their native RGBA strike (untinted);
-     * mono glyphs are tinted by {@code fill}; space glyphs paint nothing. Delegates to
-     * {@link MinecraftGraphics#drawGlyphVector} so the mcPixel-to-buffer translation stays in one
-     * place.
+     * Paints the run at an mcPixel origin. Raster glyphs blit their native RGBA strike, which
+     * {@code fill} reaches no pixel of; mono glyphs are laid in {@code fill}, its alpha included, and a
+     * pixel whose alpha comes to {@link MinecraftGraphics#DISCARD_ALPHA} or less is not laid, as the
+     * client's text shader discards below 0.1; space glyphs paint nothing. Delegates to
+     * {@link MinecraftGraphics#drawGlyphVector} so the mcPixel-to-buffer translation and the lay-down
+     * stay in one place.
      *
      * @param graphics the target graphics
      * @param xMcPx the run origin X in mcPixels
      * @param yMcPx the run origin Y in mcPixels (baseline for mono glyphs)
-     * @param fill the tint applied to mono glyphs
+     * @param fill the colour mono glyphs are laid in, its alpha included
      */
     public void paint(@NotNull MinecraftGraphics graphics, int xMcPx, int yMcPx, @NotNull Color fill) {
         graphics.drawGlyphVector(this, xMcPx, yMcPx, fill);
@@ -311,6 +313,11 @@ public final class MinecraftGlyphVector extends GlyphVector {
      * glyph's {@link MinecraftGlyph#ink() ink} offset by its bearing and by its pen rounded half up
      * (output pixels, {@code y} negative above the baseline). A glyph that draws no pixel, such as a
      * space, contributes nothing, and a run that draws none answers an empty rectangle at the origin.
+     * <p>
+     * The bounds take no colour, and hold for any colour above {@link MinecraftGraphics#DISCARD_ALPHA}:
+     * a vanilla glyph's texels are opaque or clear, so such a colour lays every one of them, while a
+     * colour at or below the cut lays none of a mono glyph's pixels. A colour glyph lays its own pixels
+     * in any colour.
      */
     @Override
     public @NotNull Rectangle2D getVisualBounds() {
@@ -329,6 +336,10 @@ public final class MinecraftGlyphVector extends GlyphVector {
      * the glyph's {@link MinecraftGlyph#signedAdvance() signed advance}, and the bounds are the pixels
      * the glyph draws about its own origin - its {@link MinecraftGlyph#ink() ink} offset by its bearing,
      * empty for a glyph that draws none. The glyph type is {@link GlyphMetrics#STANDARD}.
+     * <p>
+     * As with {@link #getVisualBounds()}, the bounds take no colour and hold for any colour above
+     * {@link MinecraftGraphics#DISCARD_ALPHA}; a mono glyph drawn in a colour at or below it lays none of
+     * them.
      *
      * @param glyphIndex the glyph index
      * @return the glyph metrics
