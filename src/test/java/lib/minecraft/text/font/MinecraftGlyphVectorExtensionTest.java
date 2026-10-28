@@ -1,17 +1,22 @@
 package lib.minecraft.text.font;
 
 import dev.simplified.image.PixelBuffer;
+import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.awt.Color;
 import java.awt.Font;
+import java.awt.Rectangle;
 import java.awt.font.FontRenderContext;
+import java.awt.font.GlyphMetrics;
 import java.awt.font.GlyphVector;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
 import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
@@ -20,6 +25,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.sameInstance;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -32,6 +38,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("MinecraftGlyphVector honours the GlyphVector contract where our pipeline reads it")
 class MinecraftGlyphVectorExtensionTest {
+
+    /**
+     * The bounds of a run that draws nothing.
+     */
+    private static final Rectangle2D EMPTY = new Rectangle2D.Double();
 
     private static String cp(int codepoint) {
         return new String(Character.toChars(codepoint));
@@ -142,7 +153,7 @@ class MinecraftGlyphVectorExtensionTest {
     }
 
     @Test
-    @DisplayName("getVisualBounds is the union of glyph ink boxes; space glyphs contribute nothing")
+    @DisplayName("getVisualBounds is the union of the pixels each glyph draws; a glyph drawing none contributes nothing")
     void visualBoundsFromInk() {
         MinecraftFont.Color colour = ColorFontFixtures.demoFont();
 
@@ -157,10 +168,61 @@ class MinecraftGlyphVectorExtensionTest {
         Rectangle2D spaceOnly = colour.layout(cp(ColorFontFixtures.CP_NEG_SPACE)).getVisualBounds();
         assertThat(spaceOnly.getWidth(), is(0.0));
         assertThat(spaceOnly.getHeight(), is(0.0));
+
+        // A raster glyph on a half-pixel pen lands where drawString rounds it, half up. A vanilla space is a
+        // 1x1 transparent bitmap, and an italic bitmap leaves clear columns either side.
+        String halfPen = "A" + cp(ColorFontFixtures.CP_FRAC_SPACE) + cp(ColorFontFixtures.CP_FLAT);
+        MinecraftFont.Vanilla regular = MinecraftFont.Vanilla.REGULAR;
+        MinecraftFont.Vanilla italic = MinecraftFont.Vanilla.ITALIC;
+        assertAll("runs answer the pixels drawString lays down",
+            () -> assertThat("half pen", bounds(colour.layout(halfPen).getVisualBounds()), is(drawnBounds(colour, halfPen))),
+            () -> assertThat("' '", bounds(regular.layout(" ").getVisualBounds()), is(EMPTY)),
+            () -> assertThat("'   '", bounds(regular.layout("   ").getVisualBounds()), is(EMPTY)),
+            () -> assertThat("'a'", bounds(regular.layout("a").getVisualBounds()), is(rect(0, -10, 10, 10))),
+            () -> assertThat("'a '", bounds(regular.layout("a ").getVisualBounds()), is(rect(0, -10, 10, 10))),
+            () -> assertThat("' a'", bounds(regular.layout(" a").getVisualBounds()), is(rect(8, -10, 10, 10))),
+            () -> assertThat("'Hello World '", bounds(regular.layout("Hello World ").getVisualBounds()), is(rect(0, -14, 108, 14))),
+            () -> assertThat("italic 'f'", bounds(italic.layout("f").getVisualBounds()), is(rect(2, -14, 9, 14))),
+            () -> assertThat("italic 'gpq'", bounds(italic.layout("gpq").getVisualBounds()), is(rect(0, -10, 36, 12)))
+        );
     }
 
     @Test
-    @DisplayName("getGlyphMetrics is honest-and-cheap: advance from signedAdvance, bounds from the bitmap box")
+    @DisplayName("getVisualBounds of every printable ASCII run in the four vanilla styles is the bounds drawString paints")
+    void visualBoundsAreTheDrawnPixels() {
+        StringBuilder printable = new StringBuilder();
+        for (int c = 32; c <= 126; c++) printable.append((char) c);
+
+        List<String> runs = new ArrayList<>();
+        for (int i = 0; i < printable.length(); i++) {
+            String c = printable.substring(i, i + 1);
+            runs.add(c);
+            runs.add(c + " ");
+            runs.add(" " + c);
+        }
+        runs.add(printable.toString());
+
+        MinecraftFont.Vanilla[] styles = {
+            MinecraftFont.Vanilla.REGULAR, MinecraftFont.Vanilla.BOLD,
+            MinecraftFont.Vanilla.ITALIC, MinecraftFont.Vanilla.BOLD_ITALIC
+        };
+        List<String> mismatches = new ArrayList<>();
+        for (MinecraftFont.Vanilla style : styles) {
+            for (String run : runs) {
+                Rectangle2D visual = bounds(style.layout(run).getVisualBounds());
+                Rectangle2D drawn = drawnBounds(style, run);
+                if (!visual.equals(drawn))
+                    mismatches.add(style + " '" + run + "' visual " + visual + " drawn " + drawn);
+            }
+        }
+
+        int total = styles.length * runs.size();
+        assertTrue(mismatches.isEmpty(), mismatches.size() + " of " + total + " runs differ from the drawn pixels, first: "
+            + mismatches.subList(0, Math.min(4, mismatches.size())));
+    }
+
+    @Test
+    @DisplayName("getGlyphMetrics is honest-and-cheap: advance from signedAdvance, bounds from the pixels the glyph draws")
     void glyphMetricsFromPackData() {
         MinecraftFont.Color colour = ColorFontFixtures.demoFont();
         MinecraftGlyphVector vector = colour.layout(cp(ColorFontFixtures.CP_FLAT) + cp(ColorFontFixtures.CP_NEG_SPACE));
@@ -172,6 +234,47 @@ class MinecraftGlyphVectorExtensionTest {
         // A space glyph advances but has empty ink bounds.
         assertThat((double) vector.getGlyphMetrics(1).getAdvanceX(), is(-16.0));
         assertThat(vector.getGlyphMetrics(1).getBounds2D().getWidth(), is(0.0));
+
+        // A vanilla space advances 4 mcPixels over a transparent bitmap, so it draws nothing; about its own
+        // origin, italic f's clear column is not part of its bounds.
+        GlyphMetrics vanillaSpace = MinecraftFont.Vanilla.REGULAR.layout(" ").getGlyphMetrics(0);
+        GlyphMetrics italicF = MinecraftFont.Vanilla.ITALIC.layout("f").getGlyphMetrics(0);
+        assertThat((double) vanillaSpace.getAdvanceX(), is(8.0));
+        assertAll("vanilla glyph bounds are the pixels the glyph draws",
+            () -> assertThat("' '", bounds(vanillaSpace.getBounds2D()), is(EMPTY)),
+            () -> assertThat("italic 'f'", bounds(italicF.getBounds2D()), is(rect(2, -14, 9, 14)))
+        );
+    }
+
+    private static @NotNull Rectangle2D rect(int x, int y, int width, int height) {
+        return new Rectangle2D.Double(x, y, width, height);
+    }
+
+    /**
+     * Copies a rectangle into a {@link Rectangle2D.Double}, so bounds of any subtype compare and print alike.
+     */
+    private static @NotNull Rectangle2D bounds(@NotNull Rectangle2D rectangle) {
+        return new Rectangle2D.Double(rectangle.getX(), rectangle.getY(), rectangle.getWidth(), rectangle.getHeight());
+    }
+
+    /**
+     * Draws a run through {@link MinecraftGraphics#drawString(String, int, int)} at a zero origin onto a clear
+     * canvas and answers the {@link PixelBuffer#opaqueBounds() non-transparent bounds} about that origin, or
+     * {@link #EMPTY} when nothing is drawn.
+     */
+    private static @NotNull Rectangle2D drawnBounds(@NotNull MinecraftFont font, @NotNull String text) {
+        int margin = 64;
+        int width = (int) Math.ceil(Math.abs(font.layout(text).advanceX())) + 2 * margin;
+        PixelBuffer canvas = PixelBuffer.create(width, 2 * margin);
+        MinecraftGraphics graphics = new MinecraftGraphics(canvas);
+        graphics.setFont(font);
+        graphics.setColor(Color.WHITE);
+        graphics.translate(margin, margin);
+        graphics.drawString(text, 0, 0);
+
+        Rectangle opaque = canvas.opaqueBounds();
+        if (opaque.isEmpty()) return EMPTY;
+        return rect(opaque.x - margin, opaque.y - margin, opaque.width, opaque.height);
     }
 
     @Test

@@ -3,6 +3,8 @@ package lib.minecraft.text.font;
 import dev.simplified.image.PixelBuffer;
 import org.jetbrains.annotations.NotNull;
 
+import java.awt.Rectangle;
+
 /**
  * One glyph, end to end: the resolved bitmap and positioning metrics a font hands back from
  * {@link MinecraftFont#glyph(int)}, plus the pen position a layout assigns to a single occurrence of
@@ -36,10 +38,17 @@ import org.jetbrains.annotations.NotNull;
  * occurrence with {@link #at(double)}, which returns a copy carrying only the pen (records have no
  * withers). A cached glyph is a value, never used as a map key, so the extra field never affects
  * cache identity.
+ * <p>
+ * <strong>Ink.</strong> {@link #ink} is read off the bitmap by {@link PixelBuffer#opaqueBounds()} once,
+ * when the mono constructor or a factory builds the glyph, and {@link #at(double)} carries it to every
+ * positioned copy, so measuring a run's drawn pixels never scans a bitmap. The accessor answers a copy,
+ * so the rectangle a cached glyph holds cannot be changed through it.
  *
  * @param codepoint the Unicode codepoint this glyph renders
  * @param bitmap the glyph pixels (white-on-transparent for mono, native RGBA for colour, 1x1
  * transparent for space)
+ * @param ink the rectangle the bitmap's non-transparent pixels cover, in bitmap coordinates - the
+ * pixels a blit draws; empty when the bitmap has none, as a vanilla space's and a space sentinel's do
  * @param advanceWidth the integer horizontal cursor advance after this glyph, in output pixels
  * @param bearingX the left bearing - horizontal offset from cursor to left edge of bitmap
  * @param bearingY the top bearing - vertical offset from baseline to top edge of bitmap
@@ -57,6 +66,7 @@ import org.jetbrains.annotations.NotNull;
 public record MinecraftGlyph(
     int codepoint,
     @NotNull PixelBuffer bitmap,
+    @NotNull Rectangle ink,
     int advanceWidth,
     int bearingX,
     int bearingY,
@@ -89,7 +99,12 @@ public record MinecraftGlyph(
      * @param bearingY the top bearing
      */
     public MinecraftGlyph(int codepoint, @NotNull PixelBuffer bitmap, int advanceWidth, int bearingX, int bearingY) {
-        this(codepoint, bitmap, advanceWidth, bearingX, bearingY, false, advanceWidth, 0, 0, -1, -1, MinecraftGlyphVector.Kind.MONO, 0.0);
+        this(codepoint, bitmap, bitmap.opaqueBounds(), advanceWidth, bearingX, bearingY, false, advanceWidth, 0, 0, -1, -1, MinecraftGlyphVector.Kind.MONO, 0.0);
+    }
+
+    @Override
+    public @NotNull Rectangle ink() {
+        return new Rectangle(this.ink);
     }
 
     /**
@@ -121,7 +136,7 @@ public record MinecraftGlyph(
      * @return the colour glyph
      */
     public static @NotNull MinecraftGlyph color(int codepoint, @NotNull PixelBuffer bitmap, float signedAdvance, int originX, int originY, int gid, int strikePpem) {
-        return new MinecraftGlyph(codepoint, bitmap, Math.round(signedAdvance), originX, originY, true, signedAdvance, originX, originY, gid, strikePpem, MinecraftGlyphVector.Kind.RASTER, 0.0);
+        return new MinecraftGlyph(codepoint, bitmap, bitmap.opaqueBounds(), Math.round(signedAdvance), originX, originY, true, signedAdvance, originX, originY, gid, strikePpem, MinecraftGlyphVector.Kind.RASTER, 0.0);
     }
 
     /**
@@ -133,7 +148,7 @@ public record MinecraftGlyph(
      * @return the space glyph
      */
     public static @NotNull MinecraftGlyph space(int codepoint, float signedAdvance) {
-        return new MinecraftGlyph(codepoint, SPACE_BITMAP, Math.round(signedAdvance), 0, 0, false, signedAdvance, 0, 0, -1, -1, MinecraftGlyphVector.Kind.SPACE, 0.0);
+        return new MinecraftGlyph(codepoint, SPACE_BITMAP, SPACE_BITMAP.opaqueBounds(), Math.round(signedAdvance), 0, 0, false, signedAdvance, 0, 0, -1, -1, MinecraftGlyphVector.Kind.SPACE, 0.0);
     }
 
     /**
@@ -145,7 +160,7 @@ public record MinecraftGlyph(
      * @return a copy of this glyph at the given pen
      */
     public @NotNull MinecraftGlyph at(double penX) {
-        return new MinecraftGlyph(codepoint, bitmap, advanceWidth, bearingX, bearingY, color, signedAdvance, originX, originY, gid, strikePpem, kind, penX);
+        return new MinecraftGlyph(codepoint, bitmap, ink, advanceWidth, bearingX, bearingY, color, signedAdvance, originX, originY, gid, strikePpem, kind, penX);
     }
 
 }
