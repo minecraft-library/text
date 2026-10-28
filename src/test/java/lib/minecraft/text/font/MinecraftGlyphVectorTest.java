@@ -6,24 +6,72 @@ import org.junit.jupiter.api.Test;
 
 import java.awt.Color;
 import java.awt.Font;
+import java.awt.Rectangle;
 import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphVector;
 import java.awt.geom.AffineTransform;
 import java.io.StringReader;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThan;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @DisplayName("MinecraftGlyphVector lays out and paints pack colour text")
 class MinecraftGlyphVectorTest {
 
+    /**
+     * A tooltip's fill as the client holds it, premultiplied - the canvas a see-through colour is laid over.
+     */
+    private static final int FILL = 0xF00F000F;
+
     private static String cp(int codepoint) {
         return new String(Character.toChars(codepoint));
+    }
+
+    /**
+     * Lists every pixel of a buffer that differs from what it should hold: {@code inside} within the area and
+     * {@code outside} everywhere else.
+     *
+     * @param buffer the buffer under test
+     * @param area the pixels that should hold {@code inside}
+     * @param inside the ARGB expected within the area
+     * @param outside the ARGB expected everywhere else
+     * @return each misplaced pixel as its position, its value and the value expected
+     */
+    private static List<String> misplaced(PixelBuffer buffer, Rectangle area, int inside, int outside) {
+        List<String> wrong = new ArrayList<>();
+        for (int y = 0; y < buffer.height(); y++)
+            for (int x = 0; x < buffer.width(); x++) {
+                int expected = area.contains(x, y) ? inside : outside;
+                if (buffer.getPixel(x, y) != expected)
+                    wrong.add(String.format("(%d,%d) %08X not %08X", x, y, buffer.getPixel(x, y), expected));
+            }
+        return wrong;
+    }
+
+    /**
+     * Counts each value a buffer holds, keyed by its hex ARGB so a failure reads as colours.
+     *
+     * @param buffer the buffer to count
+     * @return the number of pixels holding each value, in key order
+     */
+    private static Map<String, Integer> histogram(PixelBuffer buffer) {
+        Map<String, Integer> counts = new TreeMap<>();
+        for (int y = 0; y < buffer.height(); y++)
+            for (int x = 0; x < buffer.width(); x++)
+                counts.merge(String.format("%08X", buffer.getPixel(x, y)), 1, Integer::sum);
+        return counts;
     }
 
     /**
@@ -122,18 +170,22 @@ class MinecraftGlyphVectorTest {
     }
 
     @Test
-    @DisplayName("a colour raster glyph is never tinted by the fill colour")
+    @DisplayName("a colour raster glyph is never tinted by the fill colour, its alpha included")
     void rasterGlyphNotTinted() {
         MinecraftFont.Color font = ColorFontFixtures.demoFont();
         MinecraftGlyphVector vector = font.layout(cp(ColorFontFixtures.CP_FLAT));
 
-        PixelBuffer target = PixelBuffer.create(16, 16);
-        target.fill(0);
-        MinecraftGraphics graphics = new MinecraftGraphics(target);
-        vector.paint(graphics, 0, 0, Color.GREEN);   // fill would tint a mono glyph green
+        // Each fill would tint a mono glyph green; the see-through two would also scale or discard its pixels.
+        for (Color fill : List.of(Color.GREEN, new Color(0, 255, 0, 25), new Color(0, 255, 0, 0x80))) {
+            PixelBuffer target = PixelBuffer.create(16, 16);
+            target.fill(0);
+            MinecraftGraphics graphics = new MinecraftGraphics(target);
+            vector.paint(graphics, 0, 0, fill);
 
-        assertThat(target.getPixel(0, 0), is(0xFFDC2828));   // still the strike's red
-        assertThat(target.getPixel(4, 4), is(0xFF283CDC));   // still the strike's blue
+            String label = String.format("fill %08X", fill.getRGB());
+            assertThat(label + ", the strike's red", target.getPixel(0, 0), is(0xFFDC2828));
+            assertThat(label + ", the strike's blue", target.getPixel(4, 4), is(0xFF283CDC));
+        }
     }
 
     @Test
@@ -314,6 +366,77 @@ class MinecraftGlyphVectorTest {
         vector.paint(g2, 1, 10, Color.WHITE);
 
         assertThat("the run actually painted glyphs", paintedMatching(half, shifted), greaterThan(0));
+    }
+
+    @Test
+    @DisplayName("a mono glyph pixel takes its colour's alpha and is not laid at 25 or less, as the client's text shader discards below 0.1")
+    void monoGlyphPixelTakesItsColoursAlpha() {
+        PixelBuffer bitmap = PixelBuffer.create(2, 1);
+        bitmap.fill(0xFFFFFFFF);
+        MinecraftGlyph glyph = new MinecraftGlyph('x', bitmap, 4, 0, 0);
+        Rectangle laid = new Rectangle(1, 1, 2, 1);
+
+        // The client's bytes: the texel times the colour's alpha, blended translucent over the fill.
+        assertAll("a 2x1 opaque white glyph laid over " + String.format("%08X", FILL),
+            () -> assertThat("in 0x80FF0000", misplaced(blitOver(glyph, 0x80FF0000), laid, 0xF8870007, FILL), is(empty())),
+            () -> assertThat("in 0x1AFF0000", misplaced(blitOver(glyph, 0x1AFF0000), laid, 0xF227000D, FILL), is(empty())),
+            () -> assertThat("in 0x19FF0000", misplaced(blitOver(glyph, 0x19FF0000), laid, FILL, FILL), is(empty())),
+            () -> assertThat("in 0x00000000", misplaced(blitOver(glyph, 0x00000000), laid, FILL, FILL), is(empty())),
+            () -> assertThat("in 0xFFFF0000", misplaced(blitOver(glyph, 0xFFFF0000), laid, 0xFFFF0000, FILL), is(empty()))
+        );
+    }
+
+    /**
+     * Blits a glyph at {@code (1, 1)} onto a 4x3 buffer holding {@link #FILL}.
+     *
+     * @param glyph the glyph to blit
+     * @param argb the colour to blit it in
+     * @return the buffer the glyph was blitted onto
+     */
+    private static PixelBuffer blitOver(MinecraftGlyph glyph, int argb) {
+        PixelBuffer target = PixelBuffer.create(4, 3);
+        target.fill(FILL);
+        new MinecraftGraphics(target).blitGlyph(glyph, 1, 1, argb);
+        return target;
+    }
+
+    @Test
+    @DisplayName("drawString lays its colour's alpha: a colour the text shader discards draws nothing, a see-through one blends")
+    void drawStringLaysItsColoursAlpha() {
+        PixelBuffer discarded = drawnOver(new Color(0x19FFFFFF, true));
+        PixelBuffer halfRed = drawnOver(new Color(0x80FF0000, true));
+
+        assertAll("'Hi' drawn over " + String.format("%08X", FILL),
+            () -> assertThat("in 0x19FFFFFF", histogram(discarded), is(Map.of("F00F000F", 64 * 32))),
+            () -> assertThat("in 0x80FF0000", histogram(halfRed).keySet(), is(Set.of("F00F000F", "F8870007")))
+        );
+    }
+
+    /**
+     * Draws {@code "Hi"} through {@link MinecraftGraphics#drawString(String, float, float)} onto a 64x32 buffer
+     * holding {@link #FILL}.
+     *
+     * @param colour the colour to draw in
+     * @return the buffer the run was drawn onto
+     */
+    private static PixelBuffer drawnOver(Color colour) {
+        PixelBuffer target = PixelBuffer.create(64, 32);
+        target.fill(FILL);
+        MinecraftGraphics graphics = new MinecraftGraphics(target);
+        graphics.setColor(colour);
+        graphics.drawString("Hi", 1f, 10f);
+        return target;
+    }
+
+    @Test
+    @DisplayName("MinecraftGlyphVector#paint in a colour of alpha 25 paints nothing - one lay-down behind every entry point")
+    void paintInADiscardedColourPaintsNothing() {
+        PixelBuffer target = PixelBuffer.create(64, 32);
+        target.fill(0);
+        MinecraftGraphics graphics = new MinecraftGraphics(target);
+        MinecraftFont.Vanilla.REGULAR.layout("Hi").paint(graphics, 1, 10, new Color(255, 255, 255, 25));
+
+        assertThat(histogram(target), is(Map.of("00000000", 64 * 32)));
     }
 
     @Test

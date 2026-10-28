@@ -230,7 +230,7 @@ Each `MinecraftFont` enum value wraps a pre-loaded AWT `Font` and a lazy glyph a
 
 1. **Enum init** - the OTF resolves via the [runtime bootstrap](#runtime-bootstrap), AWT loads it at `FONT_POINT_SIZE = 16f`, font-level metrics (ascent, descent, height) are captured, and printable ASCII (U+0020 - U+007E) is eagerly rasterized so the first render has zero AWT overhead
 2. **Lazy rasterization** - non-ASCII codepoints are rasterized on first access via `ConcurrentMap#computeIfAbsent` and cached for subsequent renders
-3. **Draw-time tint** - glyphs are stored as white-on-transparent `PixelBuffer`s; callers multiply each pixel's alpha against a target colour at draw time, so no `Graphics2D` is needed after initialization
+3. **Draw-time tint** - glyphs are stored as white-on-transparent `PixelBuffer`s and laid at draw time in the colour, its alpha included, so no `Graphics2D` is needed after initialization. A pixel's alpha is its texel's times the colour's; a pixel whose alpha comes to 25 or less (`MinecraftGraphics.DISCARD_ALPHA`) is not laid, as the client's text shader discards below 0.1, and the rest blend over the canvas as the client's translucent text does. A colour (`sbix`) glyph keeps its own pixels, the colour reaching none of them
 
 The OTFs use `unitsPerEm = 1024` with `128 units = 1 mcPixel`, and `MC_PIXEL_SCALE = 2` maps vanilla Minecraft pixels to output pixels at the standard load size.
 

@@ -18,6 +18,12 @@ import java.awt.font.GlyphVector;
  * origin plus pen - see {@link #drawString(String, float, float)}. The inherited rectangle, image,
  * clip and translate forms stay in output pixels.
  * <p>
+ * A glyph is laid as the client lays text. A mono glyph's pixel takes its texel's alpha times the
+ * colour's, rounded half up once; a pixel whose alpha comes to {@link #DISCARD_ALPHA} or less is not
+ * laid, as the client's text shader discards a fragment below 0.1, and any other is blended over the
+ * buffer with {@link BlendMode#NORMAL}, the client's translucent blend. A colour glyph keeps its own
+ * pixels, the colour reaching none of them.
+ * <p>
  * Rendering is always at the font's native rasterization (no glyph pixel replication). Callers
  * that need a larger glyph for GUI-density use cases (e.g. stack counts on a hi-res icon)
  * should rasterize into a native-size transparent scratch buffer and lay it down with
@@ -31,6 +37,12 @@ import java.awt.font.GlyphVector;
  * @see PixelGraphics
  */
 public class MinecraftGraphics extends PixelGraphics {
+
+    /**
+     * The highest alpha a text pixel can come to and still be discarded, as the client's text shader
+     * discards a fragment whose alpha is below 0.1 - 25 of 255 is 0.098 and 26 is 0.102.
+     */
+    public static final int DISCARD_ALPHA = 25;
 
     private @NotNull MinecraftFont currentMcFont;
 
@@ -71,6 +83,10 @@ public class MinecraftGraphics extends PixelGraphics {
      * glyph's buffer X is that origin plus the glyph's pen, rounded once, half up, at the blit. A run
      * drawn at another's origin plus {@link MinecraftFontMetrics#stringAdvanceMcPixels(String) its width}
      * therefore lands every glyph where the joined run does.
+     * <p>
+     * The current colour's alpha is laid with it: a mono glyph's pixel takes its texel's alpha times the
+     * colour's, and a pixel whose alpha comes to {@link #DISCARD_ALPHA} or less is not laid, as the
+     * client's text shader discards below 0.1.
      *
      * @param str the text to draw
      * @param xMcPx the starting cursor X in mcPixels
@@ -101,18 +117,22 @@ public class MinecraftGraphics extends PixelGraphics {
     /**
      * Blits one glyph at buffer coordinates {@code (x, y)}, offset by the glyph's bearing.
      * <p>
-     * Monochrome glyphs are tinted: each pixel's alpha is multiplied against {@code tintArgb}'s
-     * RGB (the vanilla text path). Colour glyphs ({@link MinecraftGlyph#color()}) carry their own
-     * RGBA artwork and are blitted natively - {@code tintArgb} is ignored - so pack {@code sbix}
-     * strikes keep their authored colours.
+     * Monochrome glyphs are tinted as the client's text shader tints them: each pixel takes
+     * {@code tintArgb}'s red, green and blue, and its texel's alpha times {@code tintArgb}'s; a pixel
+     * whose alpha comes to {@link #DISCARD_ALPHA} or less is not laid, and any other blends with
+     * {@link BlendMode#NORMAL}. Colour glyphs ({@link MinecraftGlyph#color()}) carry their own RGBA
+     * artwork and are blitted natively - {@code tintArgb} is ignored, its alpha included - so pack
+     * {@code sbix} strikes keep their authored colours.
      *
      * @param glyph the glyph to blit
      * @param x the buffer X of the cursor
      * @param y the buffer Y of the cursor
-     * @param tintArgb the tint applied to monochrome glyphs (ignored for colour glyphs)
+     * @param tintArgb the colour monochrome glyphs are laid in, its alpha included (ignored for colour glyphs)
      */
     void blitGlyph(@NotNull MinecraftGlyph glyph, int x, int y, int tintArgb) {
         if (glyph.kind() == MinecraftGlyphVector.Kind.SPACE) return;   // advance-only sentinel, paints nothing
+        boolean color = glyph.color();
+        if (!color && ColorMath.alpha(tintArgb) <= DISCARD_ALPHA) return;   // the shader discards every pixel
         PixelBuffer bitmap = glyph.bitmap();
         int bw = bitmap.width();
         int bh = bitmap.height();
@@ -121,11 +141,6 @@ public class MinecraftGraphics extends PixelGraphics {
         PixelBuffer target = target();
         int tw = target.width();
         int th = target.height();
-
-        boolean color = glyph.color();
-        int tintR = ColorMath.red(tintArgb);
-        int tintG = ColorMath.green(tintArgb);
-        int tintB = ColorMath.blue(tintArgb);
 
         Shape clipShape = getClip();
         int clipX0 = clipShape instanceof Rectangle c ? c.x : 0;
@@ -143,11 +158,31 @@ public class MinecraftGraphics extends PixelGraphics {
                 int px = gx + bx;
                 if (px < clipX0 || px >= clipX1) continue;
 
-                int source = color ? pixel : ColorMath.pack(alpha, tintR, tintG, tintB);
-                int dst = target.getPixel(px, py);
-                target.setPixel(px, py, ColorMath.blend(source, dst, BlendMode.NORMAL));
+                if (color)
+                    target.setPixel(px, py, ColorMath.blend(pixel, target.getPixel(px, py), BlendMode.NORMAL));
+                else
+                    layTextPixel(target, px, py, alpha, tintArgb);
             }
         }
+    }
+
+    /**
+     * Lays one text pixel as the client's text shader and translucent blend lay it: the coverage times
+     * the colour's alpha, rounded half up once, is the pixel's alpha; a pixel at {@link #DISCARD_ALPHA}
+     * or less is not laid, and any other is blended over the target with {@link BlendMode#NORMAL}. An
+     * opaque colour over a whole texel lays its colour as given.
+     *
+     * @param target the buffer to lay the pixel on
+     * @param x the buffer X
+     * @param y the buffer Y
+     * @param coverage the texel's alpha, {@code 255} where the pixel is covered whole
+     * @param argb the colour the pixel is laid in, its alpha included
+     */
+    private static void layTextPixel(@NotNull PixelBuffer target, int x, int y, int coverage, int argb) {
+        int alpha = (coverage * ColorMath.alpha(argb) + 127) / 255;
+        if (alpha <= DISCARD_ALPHA) return;
+        int source = ColorMath.pack(alpha, ColorMath.red(argb), ColorMath.green(argb), ColorMath.blue(argb));
+        target.setPixel(x, y, ColorMath.blend(source, target.getPixel(x, y), BlendMode.NORMAL));
     }
 
     // --- colour glyph vector rendering ---
@@ -193,14 +228,16 @@ public class MinecraftGraphics extends PixelGraphics {
      * Paints a {@link MinecraftGlyphVector} at an mcPixel origin with its fraction kept, rounding
      * each glyph's origin plus pen once at the blit, as {@link #drawString(String, float, float)} does.
      * <p>
-     * Raster glyphs blit their native {@code sbix} strike (untinted); mono fallback glyphs are
-     * tinted by {@code fill}; space glyphs paint nothing. Pen positions come from the vector's
-     * sidecar-driven layout - Java2D's zeroed {@code GlyphVector} advances are never consulted.
+     * Raster glyphs blit their native {@code sbix} strike, which {@code fill} reaches no pixel of; mono
+     * fallback glyphs are laid in {@code fill}, its alpha included, and a pixel whose alpha comes to
+     * {@link #DISCARD_ALPHA} or less is not laid, as the client's text shader discards below 0.1; space
+     * glyphs paint nothing. Pen positions come from the vector's sidecar-driven layout - Java2D's zeroed
+     * {@code GlyphVector} advances are never consulted.
      *
      * @param vector the laid-out colour run
      * @param xMcPx the run origin X in mcPixels
      * @param yMcPx the run origin Y in mcPixels (baseline for mono glyphs)
-     * @param fill the tint applied to mono glyphs
+     * @param fill the colour mono glyphs are laid in, its alpha included
      */
     public void drawGlyphVector(@NotNull MinecraftGlyphVector vector, float xMcPx, float yMcPx, @NotNull Color fill) {
         double originX = toBuffer(translateX(), xMcPx);

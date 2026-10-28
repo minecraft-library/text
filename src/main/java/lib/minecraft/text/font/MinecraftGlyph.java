@@ -42,13 +42,17 @@ import java.awt.Rectangle;
  * <strong>Ink.</strong> {@link #ink} is read off the bitmap by {@link PixelBuffer#opaqueBounds()} once,
  * when the mono constructor or a factory builds the glyph, and {@link #at(double)} carries it to every
  * positioned copy, so measuring a run's drawn pixels never scans a bitmap. The accessor answers a copy,
- * so the rectangle a cached glyph holds cannot be changed through it.
+ * so the rectangle a cached glyph holds cannot be changed through it. It takes no colour: a vanilla
+ * glyph's texels are opaque or clear, so a blit in any colour above
+ * {@link MinecraftGraphics#DISCARD_ALPHA} lays every one of them and a colour at or below it lays none,
+ * and a colour glyph lays its own pixels in any colour.
  *
  * @param codepoint the Unicode codepoint this glyph renders
  * @param bitmap the glyph pixels (white-on-transparent for mono, native RGBA for colour, 1x1
  * transparent for space)
  * @param ink the rectangle the bitmap's non-transparent pixels cover, in bitmap coordinates - the
- * pixels a blit draws; empty when the bitmap has none, as a vanilla space's and a space sentinel's do
+ * pixels a blit draws in a colour above {@link MinecraftGraphics#DISCARD_ALPHA}; empty when the bitmap
+ * has none, as a vanilla space's and a space sentinel's do
  * @param advanceWidth the integer horizontal cursor advance after this glyph, in output pixels
  * @param bearingX the left bearing - horizontal offset from cursor to left edge of bitmap
  * @param bearingY the top bearing - vertical offset from baseline to top edge of bitmap
