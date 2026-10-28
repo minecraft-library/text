@@ -7,6 +7,7 @@ import org.jetbrains.annotations.NotNull;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics2D;
+import java.awt.Rectangle;
 import java.awt.Shape;
 import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphJustificationInfo;
@@ -305,26 +306,29 @@ public final class MinecraftGlyphVector extends GlyphVector {
     }
 
     /**
-     * The run's visual (ink) bounds: the union of each drawn glyph's bitmap box at its pen. Space
-     * glyphs contribute nothing (advance-only, no ink). Empty when the run has no inked glyph.
+     * The run's visual bounds: the union of the pixels each glyph draws, placed where
+     * {@link MinecraftGraphics#drawString(String, float, float)} draws them at a zero origin - the
+     * glyph's {@link MinecraftGlyph#ink() ink} offset by its bearing and by its pen rounded half up
+     * (output pixels, {@code y} negative above the baseline). A glyph that draws no pixel, such as a
+     * space, contributes nothing, and a run that draws none answers an empty rectangle at the origin.
      */
     @Override
     public @NotNull Rectangle2D getVisualBounds() {
-        Rectangle2D bounds = null;
+        Rectangle bounds = null;
         for (MinecraftGlyph glyph : this.glyphs) {
-            if (glyph.kind() == Kind.SPACE) continue;   // advance-only, no ink
-            Rectangle2D box = new Rectangle2D.Double(
-                glyph.penX() + glyph.bearingX(), glyph.bearingY(), glyph.bitmap().width(), glyph.bitmap().height());
-            bounds = bounds == null ? box : bounds.createUnion(box);
+            Rectangle ink = glyph.ink();
+            if (ink.isEmpty()) continue;   // draws no pixel
+            ink.translate((int) Math.round(glyph.penX()) + glyph.bearingX(), glyph.bearingY());
+            bounds = bounds == null ? ink : bounds.union(ink);
         }
-        return bounds != null ? bounds : new Rectangle2D.Double(0, 0, 0, 0);
+        return bounds != null ? bounds : new Rectangle();
     }
 
     /**
      * The per-glyph metrics at an index, built cheaply and honestly from the pack data: the advance is
-     * the glyph's {@link MinecraftGlyph#signedAdvance() signed advance}, and the bounds are the glyph's
-     * bitmap box relative to its own origin (empty for a space glyph). The glyph type is
-     * {@link GlyphMetrics#STANDARD}.
+     * the glyph's {@link MinecraftGlyph#signedAdvance() signed advance}, and the bounds are the pixels
+     * the glyph draws about its own origin - its {@link MinecraftGlyph#ink() ink} offset by its bearing,
+     * empty for a glyph that draws none. The glyph type is {@link GlyphMetrics#STANDARD}.
      *
      * @param glyphIndex the glyph index
      * @return the glyph metrics
@@ -332,9 +336,10 @@ public final class MinecraftGlyphVector extends GlyphVector {
     @Override
     public @NotNull GlyphMetrics getGlyphMetrics(int glyphIndex) {
         MinecraftGlyph glyph = this.glyphs.get(glyphIndex);
-        Rectangle2D bounds = glyph.kind() == Kind.SPACE
+        Rectangle ink = glyph.ink();
+        Rectangle2D bounds = ink.isEmpty()
             ? new Rectangle2D.Float(0, 0, 0, 0)
-            : new Rectangle2D.Float(glyph.bearingX(), glyph.bearingY(), glyph.bitmap().width(), glyph.bitmap().height());
+            : new Rectangle2D.Float(glyph.bearingX() + ink.x, glyph.bearingY() + ink.y, ink.width, ink.height);
         return new GlyphMetrics(glyph.signedAdvance(), bounds, GlyphMetrics.STANDARD);
     }
 
