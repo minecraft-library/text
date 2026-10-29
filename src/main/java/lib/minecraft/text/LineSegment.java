@@ -66,6 +66,9 @@ public final class LineSegment {
      * the symbol for another, then translate it later. Often '&' is used, but this can differ from person
      * to person. In case the string does not have a {@link ChatFormat#SECTION_SYMBOL}, the method also checks for the
      * {@code symbolSubstitute}.
+     * <p>
+     * Each line is read as {@link TextSegment#fromLegacy(String, char)} reads one, so neighbours in one style
+     * are one run, and an empty line or a line of codes alone is a line of no runs.
      *
      * @param legacyText The text to make into an object
      * @param symbolSubstitute The character substitute
