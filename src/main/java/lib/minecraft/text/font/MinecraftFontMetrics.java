@@ -8,7 +8,7 @@ import java.awt.Font;
 import java.awt.FontMetrics;
 
 /**
- * A {@link FontMetrics} implementation shared by both {@link MinecraftFont} kinds. Every advance
+ * A {@link FontMetrics} implementation shared by every {@link MinecraftFont} kind. Every advance
  * flows through {@link #advanceOf(int)} - {@code font.glyph(cp).signedAdvance()} - so the measure
  * path and the layout/draw path agree exactly: {@link #stringAdvanceX(String)} equals the
  * {@link MinecraftGlyphVector#advanceX() vector advance} for the same text.
@@ -33,8 +33,9 @@ public final class MinecraftFontMetrics extends FontMetrics {
      * construction, so this is the only entry point - there is no separate factory.
      *
      * @param mcFont the font these metrics measure
-     * @param awtFont the underlying AWT font (vanilla's own font, or a colour font's mono-fallback
-     * font) passed to the {@link FontMetrics} superclass
+     * @param awtFont the underlying AWT font (vanilla's own font, a colour font's mono-fallback font,
+     * or {@link MinecraftFont.Vanilla#REGULAR}'s for the missing font, whose line geometry it takes)
+     * passed to the {@link FontMetrics} superclass
      * @param ascent the ascent in output pixels
      * @param descent the descent in output pixels
      * @param height the line height in output pixels

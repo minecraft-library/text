@@ -18,6 +18,12 @@ import org.jetbrains.annotations.NotNull;
 public record FontId(@NotNull String namespace, @NotNull String path) {
 
     /**
+     * The default font, {@code minecraft:default} - the font a run naming none is drawn in, as the
+     * client's {@code FontDescription.DEFAULT} is.
+     */
+    public static final @NotNull FontId DEFAULT = new FontId("minecraft", "default");
+
+    /**
      * Parses a {@code namespace:path} string into a {@link FontId}. When no {@code :} is present
      * the whole string is treated as the path under the {@code minecraft} namespace, mirroring
      * vanilla resource-location resolution.

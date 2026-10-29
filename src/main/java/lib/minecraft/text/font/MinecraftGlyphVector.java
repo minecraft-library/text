@@ -30,7 +30,8 @@ import java.util.Optional;
  * glyph's {@code cmap} gid in {@link #getFont() the backing font}); {@link #getGlyphPositions
  * positions} are the layout pens; {@link #getFont}, {@link #getFontRenderContext},
  * {@link #getNumGlyphs}, {@link #getLogicalBounds}, {@link #getVisualBounds}, and
- * {@link #getGlyphMetrics} all report real data.
+ * {@link #getGlyphMetrics} all report real data. A run in {@link MinecraftFont.Missing} has no backing
+ * AWT font, so its {@link #getFont} throws, as that font's {@link MinecraftFont#awtFont()} does.
  * <p>
  * <strong>Why the outline/transform surface is stubbed.</strong> The other half of the
  * {@code GlyphVector} contract - {@link #getOutline()}, {@link #getGlyphOutline(int)},
@@ -61,7 +62,7 @@ import java.util.Optional;
  * No AWT-interop test asserting our positions or pixels through {@code Graphics2D} is possible for
  * this reason.
  * <p>
- * Layout is uniform across both {@link MinecraftFont} kinds: {@link MinecraftFont#walk the walk}
+ * Layout is uniform across every {@link MinecraftFont} kind: {@link MinecraftFont#walk the walk}
  * resolves each codepoint through {@link MinecraftFont#glyph(int)} and accumulates pens from
  * {@link MinecraftGlyph#signedAdvance()} - a mono atlas glyph, a colour {@code sbix} strike, and a
  * space provider all arrive as a {@link MinecraftGlyph} whose {@link MinecraftGlyph#kind() kind}
@@ -79,7 +80,7 @@ public final class MinecraftGlyphVector extends GlyphVector {
 
     /**
      * Lays out a run of text for any font by materializing {@link MinecraftFont#walk the walk} into a
-     * positioned glyph list. The single layout entry point for both font kinds.
+     * positioned glyph list. The single layout entry point for every font kind.
      * <p>
      * Each codepoint resolves through {@link MinecraftFont#glyph(int)}: a vanilla atlas glyph, a
      * colour {@code sbix} strike, or a space provider all arrive as a {@link MinecraftGlyph}. Pen
@@ -199,6 +200,9 @@ public final class MinecraftGlyphVector extends GlyphVector {
      * is the merged {@code .ttf}; its {@code cmap} produces the gids {@link #getGlyphCode(int)}
      * reports, so the two agree. AWT will still paint that font's empty-{@code glyf} colour glyphs
      * blank (see the class interop note), which is the documented degradation.
+     *
+     * @throws UnsupportedOperationException for a run in {@link MinecraftFont.Missing}, whose glyph is a
+     * bitmap no AWT font holds
      */
     @Override
     public @NotNull Font getFont() {
@@ -207,8 +211,9 @@ public final class MinecraftGlyphVector extends GlyphVector {
 
     /**
      * The {@link FontRenderContext} the backing font resolves under - {@link
-     * MinecraftFont#fontRenderContext()}. Vanilla's rasterization context, or an identity-transform
-     * antialiased default for a colour font.
+     * MinecraftFont#fontRenderContext()}. Vanilla's rasterization context, an identity-transform
+     * antialiased default for a colour font, or the missing font's identity transform with
+     * antialiasing and fractional metrics off.
      */
     @Override
     public @NotNull FontRenderContext getFontRenderContext() {
@@ -235,7 +240,8 @@ public final class MinecraftGlyphVector extends GlyphVector {
      * {@link MinecraftGlyph#gid() gid} straight from the row; a mono or space glyph (which carries no
      * sidecar gid) resolves its codepoint through {@link #getFont() the backing font}'s {@code cmap}
      * via {@link MinecraftFont#glyphCode(int)}, yielding {@code 0} ({@code .notdef}) when the font has
-     * no glyph for it.
+     * no glyph for it. A run in {@link MinecraftFont.Missing} has no backing font and answers
+     * {@code 0} for every glyph.
      *
      * @param glyphIndex the glyph index
      * @return the glyph id

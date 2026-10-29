@@ -18,11 +18,13 @@ import java.awt.FontFormatException;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphVector;
 import java.awt.geom.AffineTransform;
+import java.awt.geom.Area;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -46,31 +48,42 @@ import java.util.random.RandomGenerator;
 import java.util.stream.IntStream;
 
 /**
- * The unified home for every Minecraft-style font, whether a vanilla monospace atlas or a pack
- * colour ({@code sbix}) font. It is a sealed interface so a single downstream surface -
- * {@link #glyph(int)}, {@link #metrics()}, {@link #fontId()}, {@link #layout(String)} - serves both
- * kinds with no caller-side type gating. Every codepoint resolves through {@link #glyph(int)} into a
- * single {@link MinecraftGlyph}, so cache, layout, and blit all speak one glyph type.
+ * The unified home for every Minecraft-style font, whether a vanilla monospace atlas, a pack colour
+ * ({@code sbix}) font or the client's missing font. It is a sealed interface so a single downstream
+ * surface - {@link #glyph(int)}, {@link #metrics()}, {@link #fontId()}, {@link #layout(String)} -
+ * serves every kind with no caller-side type gating. Every codepoint resolves through
+ * {@link #glyph(int)} into a single {@link MinecraftGlyph}, so cache, layout, and blit all speak one
+ * glyph type.
  * <p>
- * Two implementations exist:
+ * Three implementations exist:
  * <ul>
  *   <li>{@link Vanilla} - the fixed six-value enum backing the vanilla {@code .otf} family
  *   (regular/bold/italic/bold-italic and the two alternate scripts). It owns everything AWT: font
  *   resolution, glyph rasterization, the render context, and the eager ASCII atlas.</li>
  *   <li>{@link Color} - an open, pack-supplied colour font keyed by {@link FontId}, backed by an
  *   {@code sbix} strike cache and a vanilla mono fallback.</li>
+ *   <li>{@link Missing} - the client's missing font, drawing its missing glyph for every
+ *   codepoint.</li>
  * </ul>
  * <p>
- * Both kinds answer under one key space (see {@link #get}, {@link #getOrLoad}): a pack font is held
- * by a process-wide registry ({@link #register}), and a vanilla constant is looked up by its
- * synthetic id ({@code minecraft:default}, {@code minecraft:default/bold}, ...) on the enum itself,
- * so consumers iterate {@link #fontIds()} rather than switching on the enum.
+ * The vanilla and pack fonts answer under one key space: a pack font is held by a process-wide
+ * registry ({@link #register}), and a vanilla constant is looked up by its id on the enum itself -
+ * {@code minecraft:default}, {@code minecraft:alt} and {@code minecraft:illageralt}, the ids the
+ * client names its fonts by, and {@code minecraft:default/bold}, {@code minecraft:default/italic} and
+ * {@code minecraft:default/bold_italic}, the ids the library gives the default font's other members -
+ * so consumers iterate {@link #fontIds()} rather than switching on the enum. {@link #get} answers the
+ * font a key holds, or empty, and {@link #getOrLoad} loads a pack font where {@link #get} answers
+ * none. {@link #of(FontId, Style)} answers the font a run in a font id and a style is drawn in, never
+ * empty, as the client's font manager answers a font for every id: the default font's member for the
+ * style's bold and italic, the font {@link #get} answers for any other id but the ids the library
+ * gives the default font's members, and {@link Missing} for those and for an id the library draws no
+ * font for.
  *
  * @see MinecraftGlyph
  * @see MinecraftFontMetrics
  * @see MinecraftGlyphVector
  */
-public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFont.Color {
+public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFont.Color, MinecraftFont.Missing {
 
     /**
      * Load size (in AWT points) for every Minecraft font file.
@@ -142,9 +155,9 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
     @NotNull FontId fontId();
 
     /**
-     * Lays out a run of text into a positioned glyph vector. The one layout entry point for both
-     * font kinds; the vector positions its pens from {@link MinecraftGlyph#signedAdvance()} with no
-     * vanilla-vs-colour branch.
+     * Lays out a run of text into a positioned glyph vector. The one layout entry point for every
+     * font kind; the vector positions its pens from {@link MinecraftGlyph#signedAdvance()} with no
+     * branch on the kind.
      *
      * @param text the text to lay out
      * @return the positioned glyph vector
@@ -215,8 +228,9 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * advance, as does a {@link Color} font over one of them, because the client keys bold text on its
      * non-bold advance, so a bold run's width can change from draw to draw as the client's does. A
      * {@link Color} font's candidates are its own glyphs and its fallback's, a row of its own taking
-     * the place of the fallback's glyph for that codepoint. A seeded {@link Random} draws the client's
-     * sequence of values.
+     * the place of the fallback's glyph for that codepoint. {@link Missing} holds no candidate, so
+     * every codepoint comes back as itself with no draw, as the client's missing font set supports
+     * none. A seeded {@link Random} draws the client's sequence of values.
      *
      * @param codepoint the codepoint being obfuscated
      * @param random the source of the draw
@@ -253,16 +267,20 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * The backing AWT {@link Font} this font's glyph codes resolve against, and the font a
      * {@link MinecraftGlyphVector#getFont()} returns. {@link Vanilla} hands back the {@code .otf} it
      * loaded; {@link Color} lazily {@link Font#createFont createFont}s its merged {@code .ttf}
-     * bytes once and shares that instance across every font id built from the same bytes.
+     * bytes once and shares that instance across every font id built from the same bytes;
+     * {@link Missing} has none, since its glyph is a bitmap no AWT font holds.
      *
      * @return the backing AWT font
+     * @throws UnsupportedOperationException for {@link Missing}, which has no backing AWT font
      */
     @NotNull Font awtFont();
 
     /**
      * The {@link FontRenderContext} the backing font and its glyph codes resolve under. {@link Vanilla}
      * reuses its rasterization context; {@link Color} uses an identity-transform, antialiased default
-     * (it never rasterizes vector outlines - its art is {@code sbix} strikes).
+     * (it never rasterizes vector outlines - its art is {@code sbix} strikes); {@link Missing} uses an
+     * identity transform with antialiasing and fractional metrics off, the context its whole-pixel box
+     * is measured under.
      *
      * @return the render context
      */
@@ -273,7 +291,8 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * caching per font. This backs the {@link MinecraftGlyphVector#getGlyphCode glyph-code} surface for
      * glyphs that carry no sidecar gid - vanilla atlas glyphs and space providers; colour raster glyphs
      * report their sidecar gid directly. A codepoint the backing font lacks resolves to {@code 0}
-     * ({@code .notdef}), which is the honest answer.
+     * ({@code .notdef}), which is the honest answer. {@link Missing} resolves every codepoint to
+     * {@code 0}, since each draws its one missing glyph.
      *
      * @param codepoint the Unicode codepoint
      * @return the glyph id in the backing font
@@ -358,6 +377,45 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      */
     static @NotNull Optional<MinecraftFont> get(@NotNull FontId fontId) {
         return Optional.ofNullable(Registry.MAP.get(fontId)).or(() -> Vanilla.findByFontId(fontId));
+    }
+
+    /**
+     * Returns the font a run in a font id and a style is drawn in, never empty, as the client's font
+     * manager answers a font for every id.
+     * <ul>
+     *   <li><b>{@link FontId#DEFAULT}</b> - the default font's member for the style's bold and italic,
+     *   read through {@link #get} under that member's id, so a font registered in a member's place
+     *   answers in its stead.</li>
+     *   <li><b>Any other id {@link #get} answers, bar the default font's member ids below</b> - that
+     *   font, in its one face whatever the style. The alternate scripts and a pack font have no bold or
+     *   italic face.</li>
+     *   <li><b>An id the library draws no font for</b> - {@link Missing}, as the client draws its
+     *   missing glyph for a font id it has no font under. That covers an id nothing is registered under
+     *   and no vanilla font carries; an id the client has a font under that the library carries no face
+     *   for - {@code minecraft:uniform}, {@code minecraft:include/default},
+     *   {@code minecraft:include/space} and {@code minecraft:include/unifont}; and the ids the library
+     *   gives the default font's members, {@code minecraft:default/bold},
+     *   {@code minecraft:default/italic} and {@code minecraft:default/bold_italic}, which name no font of
+     *   the client's. A font registered under one of those answers through {@link FontId#DEFAULT}
+     *   alone.</li>
+     * </ul>
+     * <p>
+     * A pack font answers once it is registered; unlike {@link #getOrLoad}, this loads none.
+     *
+     * @param fontId the font id the run names, {@link FontId#DEFAULT} where it names none
+     * @param style the run's bold and italic; a script style carries neither and reads as regular
+     * @return the font the run is drawn in
+     */
+    static @NotNull MinecraftFont of(@NotNull FontId fontId, @NotNull Style style) {
+        if (fontId.equals(FontId.DEFAULT)) {
+            Vanilla member = Vanilla.defaultMember(style);
+            return get(member.fontId()).orElse(member);
+        }
+
+        if (Vanilla.findByFontId(fontId).filter(Vanilla::isDefaultMember).isPresent())
+            return Missing.INSTANCE;
+
+        return get(fontId).orElse(Missing.INSTANCE);
     }
 
     /**
@@ -529,6 +587,33 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
          */
         public static @NotNull Vanilla of(@NotNull Style style) {
             return findByStyle(style).orElse(REGULAR);
+        }
+
+        /**
+         * Returns the default font's member for a style's bold and italic - {@link #REGULAR},
+         * {@link #BOLD}, {@link #ITALIC} or {@link #BOLD_ITALIC}. A script style carries neither, so it
+         * answers {@link #REGULAR}.
+         *
+         * @param style the style
+         * @return the member
+         */
+        static @NotNull Vanilla defaultMember(@NotNull Style style) {
+            return switch (style) {
+                case BOLD -> Vanilla.BOLD;
+                case ITALIC -> Vanilla.ITALIC;
+                case BOLD_ITALIC -> Vanilla.BOLD_ITALIC;
+                case REGULAR, GALACTIC, ILLAGERALT -> Vanilla.REGULAR;
+            };
+        }
+
+        /**
+         * Returns whether this font is one of the default font's members rather than an alternate
+         * script.
+         *
+         * @return whether {@link #defaultMember(Style)} answers this font for its own style
+         */
+        boolean isDefaultMember() {
+            return defaultMember(this.style) == this;
         }
 
         @Override
@@ -1095,6 +1180,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             GlyphsByWidth fallback = switch (this.monoFallback) {
                 case Vanilla vanilla -> vanilla.glyphsByWidth();
                 case Color color -> color.glyphsByWidth();
+                case Missing missing -> missing.glyphsByWidth();
             };
             IntStream rowCodepoints = this.sidecar.rows(this.fontId).stream().mapToInt(GlyphRow::codepoint);
 
@@ -1250,6 +1336,175 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
                 return argb;
             }
 
+        }
+
+    }
+
+    /**
+     * The client's missing font, {@code minecraft:missing} - the font a run is drawn in where the
+     * library draws no font for the run's id, as the client draws its missing font set for an id it
+     * has no font under. It draws the client's missing glyph for every codepoint, U+0020 included.
+     * <p>
+     * The missing glyph is a hollow box 5 mcPixels wide and 8 tall, lit on its four edges, with its
+     * left at the pen and its top on the ascent line, 7 mcPixels above the baseline; it moves the pen 6
+     * mcPixels. Its texels are opaque white, so it is laid in the run's colour as a {@link Vanilla}
+     * glyph is, and its outline is the box it draws. Its line metrics are {@link Vanilla#REGULAR}'s, as
+     * the client lays every font out on one line height. It has one face, so a bold or italic run in it
+     * draws the plain box, where the client offsets a bold one by an mcPixel and slants an italic one.
+     * <p>
+     * The font supports no codepoint, so it offers obfuscated text no candidate: every codepoint comes
+     * back as itself with no draw, as the client's empty candidate table answers its missing glyph
+     * again. A {@link Color} font over it as its mono fallback picks among its own rows alone, and draws
+     * a codepoint it holds no row for as the missing glyph.
+     * <p>
+     * The glyph is a bitmap no AWT font holds, so the font has no backing AWT font and
+     * {@link #awtFont()} throws {@link UnsupportedOperationException}. Nothing in the library reads one:
+     * {@link MinecraftGraphics} blits the glyph records, {@link MinecraftFontMetrics} sums their
+     * advances, and a {@link MinecraftGlyphVector} answers its bounds and glyph metrics from them, so
+     * only a caller asking a vector laid out in this font for its
+     * {@link MinecraftGlyphVector#getFont() AWT font} reaches it. Every codepoint's glyph code is
+     * {@code 0}, the {@code .notdef} id a font gives the glyph it draws for a codepoint it lacks, and
+     * its render context is an identity transform with antialiasing and fractional metrics off.
+     */
+    enum Missing implements MinecraftFont {
+
+        INSTANCE;
+
+        /**
+         * The missing glyph's width, in mcPixels.
+         */
+        private static final int BOX_WIDTH = 5;
+
+        /**
+         * The missing glyph's height, in mcPixels.
+         */
+        private static final int BOX_HEIGHT = 8;
+
+        /**
+         * How far the missing glyph's top sits above the baseline, in mcPixels.
+         */
+        private static final int BOX_ASCENT = 7;
+
+        /**
+         * How far the missing glyph moves the pen, in mcPixels - its width and one more.
+         */
+        private static final int ADVANCE = BOX_WIDTH + 1;
+
+        /**
+         * The colour of a lit texel, opaque white.
+         */
+        private static final int LIT = 0xFFFFFFFF;
+
+        private final @NotNull FontId fontId;
+
+        /**
+         * The missing glyph's pixels, which every codepoint's glyph shares.
+         */
+        private final @NotNull PixelBuffer box;
+
+        /**
+         * The box's fillable outline about the pen and the baseline, in output pixels.
+         */
+        private final @NotNull Shape outline;
+
+        private final @NotNull MinecraftFontMetrics metrics;
+
+        private final @NotNull FontRenderContext frc;
+
+        /**
+         * The glyphs obfuscated text in this font picks from - none, since the font supports no
+         * codepoint, with every codepoint laid out at the missing glyph's advance.
+         */
+        private final @NotNull GlyphsByWidth glyphsByWidth;
+
+        private final @NotNull ConcurrentMap<Integer, MinecraftGlyph> glyphCache;
+
+        Missing() {
+            this.fontId = new FontId("minecraft", "missing");
+            this.box = drawBox();
+            this.outline = outlineBox();
+            this.frc = new FontRenderContext(null, false, false);
+            this.glyphsByWidth = GlyphsByWidth.of(new int[0], codepoint -> ADVANCE * MC_PIXEL_SCALE);
+            this.glyphCache = Concurrent.newMap();
+
+            MinecraftFontMetrics regular = Vanilla.REGULAR.metrics();
+            this.metrics = new MinecraftFontMetrics(this, regular.getFont(), regular.getAscent(), regular.getDescent(), regular.getHeight());
+        }
+
+        /**
+         * Draws the missing glyph at {@link MinecraftFont#MC_PIXEL_SCALE} output pixels a texel, lit
+         * where the client's is: on the box's first and last column and its first and last row.
+         */
+        private static @NotNull PixelBuffer drawBox() {
+            PixelBuffer box = PixelBuffer.create(BOX_WIDTH * MC_PIXEL_SCALE, BOX_HEIGHT * MC_PIXEL_SCALE);
+
+            for (int y = 0; y < box.height(); y++) {
+                for (int x = 0; x < box.width(); x++) {
+                    int column = x / MC_PIXEL_SCALE;
+                    int row = y / MC_PIXEL_SCALE;
+
+                    if (column == 0 || column + 1 == BOX_WIDTH || row == 0 || row + 1 == BOX_HEIGHT)
+                        box.setPixel(x, y, LIT);
+                }
+            }
+
+            return box;
+        }
+
+        /**
+         * Traces the box {@link #drawBox()} lights as a fillable outline about the pen and the baseline,
+         * in output pixels: the whole box less the texels inside its edges.
+         */
+        private static @NotNull Shape outlineBox() {
+            int texel = MC_PIXEL_SCALE;
+            Area outline = new Area(new Rectangle(0, -BOX_ASCENT * texel, BOX_WIDTH * texel, BOX_HEIGHT * texel));
+            outline.subtract(new Area(new Rectangle(texel, (1 - BOX_ASCENT) * texel, (BOX_WIDTH - 2) * texel, (BOX_HEIGHT - 2) * texel)));
+            return outline;
+        }
+
+        @Override
+        public @NotNull MinecraftGlyph glyph(int codepoint) {
+            return this.glyphCache.computeIfAbsent(codepoint, cp -> new MinecraftGlyph(cp, this.box, ADVANCE * MC_PIXEL_SCALE, 0, -BOX_ASCENT * MC_PIXEL_SCALE));
+        }
+
+        @Override
+        public @NotNull MinecraftFontMetrics metrics() {
+            return this.metrics;
+        }
+
+        @Override
+        public @NotNull FontId fontId() {
+            return this.fontId;
+        }
+
+        @Override
+        public @NotNull Optional<Shape> monoOutline(int codepoint, double penX) {
+            return Optional.of(AffineTransform.getTranslateInstance(penX, 0).createTransformedShape(this.outline));
+        }
+
+        @Override
+        public @NotNull Font awtFont() {
+            throw new UnsupportedOperationException("The missing font draws a bitmap no AWT font holds, so it has no backing AWT font");
+        }
+
+        @Override
+        public @NotNull FontRenderContext fontRenderContext() {
+            return this.frc;
+        }
+
+        @Override
+        public int glyphCode(int codepoint) {
+            return 0;
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public int obfuscate(int codepoint, @NotNull RandomGenerator random) {
+            return this.glyphsByWidth.obfuscate(codepoint, random);
+        }
+
+        @NotNull GlyphsByWidth glyphsByWidth() {
+            return this.glyphsByWidth;
         }
 
     }
