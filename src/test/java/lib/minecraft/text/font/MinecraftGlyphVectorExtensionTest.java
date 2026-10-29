@@ -182,8 +182,8 @@ class MinecraftGlyphVectorExtensionTest {
             () -> assertThat("'a '", bounds(regular.layout("a ").getVisualBounds()), is(rect(0, -10, 10, 10))),
             () -> assertThat("' a'", bounds(regular.layout(" a").getVisualBounds()), is(rect(8, -10, 10, 10))),
             () -> assertThat("'Hello World '", bounds(regular.layout("Hello World ").getVisualBounds()), is(rect(0, -14, 108, 14))),
-            () -> assertThat("italic 'f'", bounds(italic.layout("f").getVisualBounds()), is(rect(2, -14, 9, 14))),
-            () -> assertThat("italic 'gpq'", bounds(italic.layout("gpq").getVisualBounds()), is(rect(0, -10, 36, 12)))
+            () -> assertThat("italic 'f'", bounds(italic.layout("f").getVisualBounds()), is(rect(1, -14, 9, 14))),
+            () -> assertThat("italic 'gpq'", bounds(italic.layout("gpq").getVisualBounds()), is(rect(-2, -10, 37, 12)))
         );
     }
 
@@ -254,7 +254,7 @@ class MinecraftGlyphVectorExtensionTest {
         assertThat((double) vanillaSpace.getAdvanceX(), is(8.0));
         assertAll("vanilla glyph bounds are the pixels the glyph draws",
             () -> assertThat("' '", bounds(vanillaSpace.getBounds2D()), is(EMPTY)),
-            () -> assertThat("italic 'f'", bounds(italicF.getBounds2D()), is(rect(2, -14, 9, 14)))
+            () -> assertThat("italic 'f'", bounds(italicF.getBounds2D()), is(rect(1, -14, 9, 14)))
         );
     }
 

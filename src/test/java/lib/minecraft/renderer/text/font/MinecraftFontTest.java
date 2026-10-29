@@ -21,6 +21,8 @@ import java.awt.geom.Rectangle2D;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,7 +43,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * its underlying {@code .otf} file, catching any mismatch between the enum's declared
  * filenames and what the {@code generateFonts} Gradle task actually produces, and holds
  * {@link MinecraftFont#of(FontId, MinecraftFont.Style)} and {@link TextSegment#resolveFont()} to the
- * font the client draws a run in, the client's missing font included.
+ * font the client draws a run in, the client's missing font included, and each font's
+ * {@link MinecraftFont#slant()} to the one its font file declares.
  */
 @DisplayName("MinecraftFont resolves every .otf from the classpath")
 class MinecraftFontTest {
@@ -352,6 +355,65 @@ class MinecraftFontTest {
     }
 
     @Test
+    @DisplayName("the italic faces answer the slant their files declare: a quarter mcPixel right per mcPixel of height, about the height 3 mcPixels above the baseline")
+    void theItalicFacesAnswerTheSlantTheirFilesDeclare() {
+        List<Executable> checks = new ArrayList<>();
+
+        for (MinecraftFont.Vanilla font : List.of(MinecraftFont.Vanilla.ITALIC, MinecraftFont.Vanilla.BOLD_ITALIC)) {
+            MinecraftFont.Slant slant = font.slant();
+            checks.add(() -> assertThat(font + " slant", slant, is(new MinecraftFont.Slant(0.25f, 3f))));
+            checks.add(() -> assertThat(font + " at the pivot", slant.shift(3f), is(0f)));
+            checks.add(() -> assertThat(font + " on the baseline, the caret offset of -96 units at 128 units an mcPixel", slant.shift(0f), is(-0.75f)));
+            checks.add(() -> assertThat(font + " on the ascent line", slant.shift(7f), is(1f)));
+        }
+
+        assertAll(checks);
+    }
+
+    @Test
+    @DisplayName("a font whose file declares no slant answers none: the upright faces, the alternate scripts, a colour font over a file declaring none, and the missing font")
+    void aFontWhoseFileDeclaresNoSlantAnswersNone() throws IOException {
+        List<MinecraftFont> fonts = List.of(
+            MinecraftFont.Vanilla.REGULAR,
+            MinecraftFont.Vanilla.BOLD,
+            MinecraftFont.Vanilla.GALACTIC,
+            MinecraftFont.Vanilla.ILLAGERALT,
+            colourFontUnder(FontId.parse("pack:font")),
+            MinecraftFont.Missing.INSTANCE
+        );
+        List<Executable> checks = new ArrayList<>();
+
+        for (MinecraftFont font : fonts)
+            checks.add(() -> assertThat(font.fontId().toString(), font.slant(), is(MinecraftFont.Slant.NONE)));
+
+        checks.add(() -> assertThat("no slant moves no point", MinecraftFont.Slant.NONE.shift(7f), is(0f)));
+        assertAll(checks);
+    }
+
+    @Test
+    @DisplayName("a font answers the slant its own file declares, at its own units per em, and none where the file holds no hhea table")
+    void aFontAnswersTheSlantItsOwnFileDeclares() throws IOException {
+        byte[] slanted = synthColour();
+        ByteBuffer buffer = ByteBuffer.wrap(slanted);
+        int hhea = buffer.getInt(tableRecord(slanted, "hhea") + 8);
+        int head = buffer.getInt(tableRecord(slanted, "head") + 8);
+        buffer.putShort(hhea + 18, (short) 2).putShort(hhea + 20, (short) 1).putShort(hhea + 22, (short) -128);
+        buffer.putShort(head + 18, (short) 2048);
+
+        byte[] noHhea = slanted.clone();
+        noHhea[tableRecord(noHhea, "hhea") + 3] = 'x';
+
+        MinecraftFont.Slant slant = colourFontOver(FontId.parse("pack:slanted"), slanted).slant();
+        MinecraftFont.Slant none = colourFontOver(FontId.parse("pack:unslanted"), noHhea).slant();
+
+        assertAll(
+            () -> assertThat("caret rise 2, run 1, offset -128 at 2048 units per em", slant, is(new MinecraftFont.Slant(0.5f, 1f))),
+            () -> assertThat("on the baseline, the caret offset of -128 units at 256 units an mcPixel", slant.shift(0f), is(-0.5f)),
+            () -> assertThat("the same caret under a table tag other than hhea", none, is(MinecraftFont.Slant.NONE))
+        );
+    }
+
+    @Test
     @DisplayName("resolveFont answers the default font's member for a segment naming no font")
     void resolveFontDrawsAnUnnamedSegmentInTheDefaultFont() {
         TextSegment plain = TextSegment.builder().text("text").build();
@@ -449,12 +511,54 @@ class MinecraftFontTest {
      * @throws IOException if the fixture font cannot be read
      */
     private static @NotNull MinecraftFont colourFontUnder(@NotNull FontId fontId) throws IOException {
-        ColorGlyphSidecar sidecar = ColorGlyphSidecar.parse(new StringReader("{\"schema_version\": 2, \"glyphs\": []}"));
+        return colourFontOver(fontId, synthColour());
+    }
 
+    /**
+     * Builds a colour font holding no row of its own under a font id, over the given font file and
+     * {@link MinecraftFont.Vanilla#BOLD}.
+     *
+     * @param fontId the font id
+     * @param ttf the colour font file's bytes
+     * @return the colour font
+     * @throws IOException if the sidecar cannot be read
+     */
+    private static @NotNull MinecraftFont colourFontOver(@NotNull FontId fontId, byte @NotNull [] ttf) throws IOException {
+        ColorGlyphSidecar sidecar = ColorGlyphSidecar.parse(new StringReader("{\"schema_version\": 2, \"glyphs\": []}"));
+        return MinecraftFont.Color.of(fontId, ttf, sidecar, MinecraftFont.Vanilla.BOLD);
+    }
+
+    /**
+     * Reads the colour fixture font {@code SynthColour.ttf}, whose {@code hhea} caret stands upright.
+     *
+     * @return a fresh copy of the file's bytes
+     * @throws IOException if the fixture font cannot be read
+     */
+    private static byte @NotNull [] synthColour() throws IOException {
         try (InputStream ttf = MinecraftFontTest.class.getClassLoader().getResourceAsStream("colorfont/SynthColour.ttf")) {
             assertThat("the colour fixture font is on the test classpath", ttf, notNullValue());
-            return MinecraftFont.Color.of(fontId, ttf.readAllBytes(), sidecar, MinecraftFont.Vanilla.BOLD);
+            return ttf.readAllBytes();
         }
+    }
+
+    /**
+     * Finds a table's record in an sfnt font file's table directory: a {@code uint16} table count at
+     * byte 4, then a 16-byte record per table from byte 12, each its four-character tag and, 8 bytes
+     * in, the table's offset from the start of the file.
+     *
+     * @param sfnt the raw font bytes
+     * @param tag the table's four-character tag
+     * @return where the table's record starts
+     */
+    private static int tableRecord(byte @NotNull [] sfnt, @NotNull String tag) {
+        int numTables = Short.toUnsignedInt(ByteBuffer.wrap(sfnt).getShort(4));
+
+        for (int i = 0, record = 12; i < numTables; i++, record += 16) {
+            if (tag.equals(new String(sfnt, record, 4, StandardCharsets.ISO_8859_1)))
+                return record;
+        }
+
+        throw new AssertionError("The fixture font has no '" + tag + "' table");
     }
 
 }
