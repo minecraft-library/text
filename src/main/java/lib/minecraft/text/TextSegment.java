@@ -200,14 +200,26 @@ public final class TextSegment {
 
     /**
      * Resolves the {@link MinecraftFont.Style} corresponding to this segment's bold and italic
-     * flags. Used by {@code TextRenderer} and any other caller that needs to pick a font
-     * variant from a styled segment without coupling the font enum back to this class.
+     * flags - the style {@link #resolveFont()} picks the segment's font in.
      *
      * @return the matching font style, or {@link MinecraftFont.Style#REGULAR} when neither
      * bold nor italic is set
      */
     public @NotNull MinecraftFont.Style fontStyle() {
         return MinecraftFont.Style.of((this.isBold() ? 1 : 0) + (this.isItalic() ? 2 : 0));
+    }
+
+    /**
+     * Resolves the font this segment is drawn in - the one it names, or {@link FontId#DEFAULT} where
+     * it names none, in its {@link #fontStyle() style} - as
+     * {@link MinecraftFont#of(FontId, MinecraftFont.Style)} answers it. A run {@link #toLines()} gives
+     * carries the font it inherits, and an id the library draws no font for answers
+     * {@link MinecraftFont.Missing}.
+     *
+     * @return the font the segment is drawn in
+     */
+    public @NotNull MinecraftFont resolveFont() {
+        return MinecraftFont.of(this.font.orElse(FontId.DEFAULT), this.fontStyle());
     }
 
     /**

@@ -23,8 +23,8 @@ import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Covers {@link MinecraftFont#obfuscate(int, RandomGenerator)} over the generated
- * fonts and the colour fixture. Every assertion is a property of the fonts' tables - an advance kept,
+ * Covers {@link MinecraftFont#obfuscate(int, RandomGenerator)} over the generated fonts, the missing
+ * font and the colour fixture. Every assertion is a property of the fonts' tables - an advance kept,
  * a draw counted, a candidate set - and never a pinned pick or member count, because both move with
  * the generated fonts and with the JDK's view of them.
  * <p>
@@ -334,6 +334,50 @@ class MinecraftFontObfuscateTest {
             float width = regular.widthOf(codepoint);
             assertEquals(width, table.widthOf(codepoint), String.format("U+%04X", codepoint));
             assertThat(String.format("U+%04X", codepoint), boxed(table.bucket(width)), hasItem(codepoint));
+        }
+    }
+
+    @Test
+    @DisplayName("the missing font keeps every codepoint and draws nothing, as the client's empty candidate table does")
+    void missingFontKeepsEveryCodepointWithoutADraw() {
+        int[] codepoints = IntStream.concat(
+            IntStream.rangeClosed(0x20, 0x7E),
+            IntStream.concat(IntStream.of(OTHER_WHITESPACE), IntStream.of(UNMAPPED, 0x1F600))
+        ).toArray();
+
+        for (int codepoint : codepoints) {
+            for (long seed = 0; seed < SEEDS; seed++) {
+                CountingRandom random = new CountingRandom(seed);
+                String described = describe(MinecraftFont.Missing.INSTANCE, codepoint, seed);
+                assertThat(described, MinecraftFont.Missing.INSTANCE.obfuscate(codepoint, random), is(codepoint));
+                assertThat(described, random.bounds(), is(List.of()));
+                assertThat(described, random.otherDraws(), is(0));
+            }
+        }
+
+        CountingRandom random = new CountingRandom(0);
+        assertThat(MinecraftFont.Missing.INSTANCE.obfuscate("Hello World", random), is("Hello World"));
+        assertThat(random.bounds(), is(List.of()));
+    }
+
+    @Test
+    @DisplayName("a colour font over the missing font draws among its own rows alone, and keeps a codepoint it holds no row for")
+    void colourOverTheMissingFontDrawsAmongItsRowsAlone() {
+        MinecraftFont.Color font = MinecraftFont.Color.of(
+            ColorFontFixtures.DEMO, ColorFontFixtures.bytes(ColorFontFixtures.MERGED_TTF), ColorFontFixtures.sidecar(), MinecraftFont.Missing.INSTANCE
+        );
+        GlyphsByWidth table = font.glyphsByWidth();
+
+        assertThat(boxed(table.bucket(16f)), is(DEMO_ROWS_AT_16_PX));
+        assertThat("a codepoint with no row lays out at the missing glyph's advance", table.widthOf('A'), is(12f));
+        assertThat(boxed(table.bucket(12f)), is(List.of()));
+        assertThat(font.glyph('A'), is(sameInstance(MinecraftFont.Missing.INSTANCE.glyph('A'))));
+
+        for (long seed = 0; seed < SEEDS; seed++) {
+            CountingRandom random = new CountingRandom(seed);
+            assertThat(font.obfuscate('A', random), is((int) 'A'));
+            assertThat(random.bounds(), is(List.of()));
+            assertThat(DEMO_ROWS_AT_16_PX, hasItem(font.obfuscate(ColorFontFixtures.CP_FLAT, new Random(seed))));
         }
     }
 

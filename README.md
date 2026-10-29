@@ -13,6 +13,7 @@ A Java 21 library that models Minecraft's chat text system - colours, formatting
   - [Installation](#installation)
   - [Usage](#usage)
 - [Fonts](#fonts)
+  - [Choosing a Run's Font](#choosing-a-runs-font)
   - [Runtime Bootstrap](#runtime-bootstrap)
   - [Build-Time Generation](#build-time-generation)
 - [Packages](#packages)
@@ -136,7 +137,7 @@ int baselineYMcPx = MinecraftFont.Vanilla.REGULAR.metrics().getAscentMcPixels();
 
 for (TextSegment segment : line.getSegments()) {
     String text = segment.getText();
-    MinecraftFont font = MinecraftFont.Vanilla.of(segment.fontStyle());
+    MinecraftFont font = segment.resolveFont();
     segment.getColor().ifPresent(c -> gfx.setColor(c.color()));
     gfx.setFont(font);
     gfx.drawString(text, cursorXMcPx, baselineYMcPx);
@@ -148,6 +149,19 @@ for (TextSegment segment : line.getSegments()) {
 > Call `MinecraftFont.Vanilla.REGULAR.glyph(codepoint)` directly if you need per-glyph bitmaps (e.g. for a custom layout engine). The glyph cache is thread-safe and lazily populated via `ConcurrentMap#computeIfAbsent`.
 
 ## Fonts
+
+### Choosing a Run's Font
+
+A run is drawn in the font its segment names, or in `minecraft:default` (`FontId.DEFAULT`) where it names none, in its bold and italic. `TextSegment#resolveFont` answers that font through `MinecraftFont.of(FontId, Style)`, which answers a font for every id, as the client's font manager does:
+
+| Font id | Font |
+|---------|------|
+| `minecraft:default` | the default font's member for the style - `Vanilla.REGULAR`, `BOLD`, `ITALIC` or `BOLD_ITALIC` - or a font registered under that member's id in its place |
+| `minecraft:alt`, `minecraft:illageralt` | `Vanilla.GALACTIC`, `Vanilla.ILLAGERALT`, or a font registered under the id in its place, in its one face whatever the style |
+| a registered pack font's id | that font, in its one face whatever the style |
+| any other id | `MinecraftFont.Missing`, the client's missing font |
+
+The missing font draws the client's missing glyph for every codepoint, U+0020 included: a hollow box 5 mcPixels wide and 8 tall, its top on the ascent line, moving the pen 6 mcPixels. A run naming an id the client has no font under draws it, as the client does. So does a run naming a font the client has that the library cannot draw - `minecraft:uniform`, `minecraft:include/default`, `minecraft:include/space` and `minecraft:include/unifont` - where the client draws that font's glyphs, so the boxes show plainly what the library cannot draw. The ids the library gives the default font's members (`minecraft:default/bold`, `minecraft:default/italic`, `minecraft:default/bold_italic`) name no font of the client's and draw it too; `MinecraftFont.get` answers each of them as it does any id - its member, or a font registered under it.
 
 ### Runtime Bootstrap
 
@@ -222,7 +236,7 @@ LineSegment                                 # an ordered list of runs
   └── segments     (ConcurrentList<TextSegment>)
 ```
 
-`TextSegment.fromLegacy(String)` and `LineSegment.fromLegacy(String, char)` parse legacy section-symbol strings (`§6...§l...` or a user-chosen substitute) into the model, and `TextSegment#toLines` flattens a segment and its siblings into lines of runs. `TextSegment#toJson` emits the wire-format `JsonElement`; `TextSegment.fromJson` round-trips it back. `MinecraftGraphics` draws the resulting runs one at a time, picking a font variant via `TextSegment#fontStyle`.
+`TextSegment.fromLegacy(String)` and `LineSegment.fromLegacy(String, char)` parse legacy section-symbol strings (`§6...§l...` or a user-chosen substitute) into the model, and `TextSegment#toLines` flattens a segment and its siblings into lines of runs. `TextSegment#toJson` emits the wire-format `JsonElement`; `TextSegment.fromJson` round-trips it back. A caller draws each resulting run through `MinecraftGraphics#setFont(MinecraftFont)` in the font `TextSegment#resolveFont` answers for it (see [Choosing a Run's Font](#choosing-a-runs-font)).
 
 ### Glyph Rendering
 
