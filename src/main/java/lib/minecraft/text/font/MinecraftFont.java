@@ -33,6 +33,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -106,19 +107,6 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
     int MC_PIXEL_SCALE = 2;
 
     /**
-     * Horizontal shear of the italic OTFs, as {@code dx} per {@code +1} unit above the baseline.
-     * <p>
-     * The italic slant is baked into {@code Minecraft-Italic.otf} / {@code Minecraft-BoldItalic.otf}
-     * at generation time - there is no runtime glyph matrix to intercept. This constant mirrors the
-     * font-generator's {@code ITALIC_SHEAR_FACTOR = 1 / ITALIC_SHEAR_VERTICAL} (with
-     * {@code ITALIC_SHEAR_VERTICAL = 5}), which each glyph contour is sheared by as
-     * {@code (sx + sy * factor, sy)}. Because the shear is scale-uniform it is the same slope in
-     * output px, so a renderer that wants a gradient's colour bands to run parallel to italic
-     * letterforms slants them by this factor. It does not affect glyph drawing.
-     */
-    float ITALIC_SHEAR = 1.0f / 5.0f;
-
-    /**
      * Minecraft version used by the runtime font bootstrap when the classpath has no {@code fonts/}
      * resources. Mirrors {@link ToolingFonts#DEFAULT_VERSION} so the in-module Gradle task and the
      * runtime cache produce byte-identical output.
@@ -153,6 +141,20 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * @return the font id
      */
     @NotNull FontId fontId();
+
+    /**
+     * Returns the slant this font's glyphs are drawn with, as the font file it loads declares it.
+     * <p>
+     * The italic faces lean a quarter mcPixel right per mcPixel of height about the height 3 mcPixels
+     * above the baseline, the slant the client gives an italic glyph, and their outlines already
+     * carry it, so nothing in the library applies it again. It is for what a caller lays along a run
+     * that should lean with the glyphs, such as a gradient's colour bands. A font whose file declares
+     * no slant - the upright vanilla faces, the alternate scripts, a colour font's merged file - and
+     * {@link Missing}, which draws its box upright, answer {@link Slant#NONE}.
+     *
+     * @return the slant, {@link Slant#NONE} for an upright font
+     */
+    @NotNull Slant slant();
 
     /**
      * Lays out a run of text into a positioned glyph vector. The one layout entry point for every
@@ -465,11 +467,12 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * The fixed vanilla font family plus its two alternate-script companions, each wrapping a
      * pre-loaded {@link Font} and a lazy glyph atlas for pure {@link PixelBuffer} text rendering.
      * <p>
-     * At enum initialization the underlying {@code .otf} font is loaded via AWT and font-level
-     * metrics (ascent, descent, height) are captured. Printable ASCII glyphs (codepoints 32-126) are
-     * eagerly rasterized so the first render has zero AWT overhead; all other glyphs are lazily
-     * rasterized on first use and cached. Glyph bitmaps are white-on-transparent and tinted at draw
-     * time - no {@link Graphics2D} is needed after initialization.
+     * At enum initialization the underlying {@code .otf} font is loaded via AWT, the {@link Slant}
+     * its file declares is read from the same bytes, and font-level metrics (ascent, descent, height)
+     * are captured. Printable ASCII glyphs (codepoints 32-126) are eagerly rasterized so the first
+     * render has zero AWT overhead; all other glyphs are lazily rasterized on first use and cached.
+     * Glyph bitmaps are white-on-transparent and tinted at draw time - no {@link Graphics2D} is
+     * needed after initialization.
      */
     @Getter
     @EnumLookup
@@ -521,6 +524,9 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
         @Getter(AccessLevel.NONE)
         private final @NotNull MinecraftFontMetrics metrics;
 
+        @Getter(AccessLevel.NONE)
+        private final @NotNull Slant slant;
+
         /**
          * The AWT {@link FontMetrics} captured at init - reused by glyph rasterization.
          */
@@ -554,6 +560,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             Resolved resolved = resolveFont(fileName);
             this.actual = resolved.font();
             this.path = resolved.path();
+            this.slant = resolved.slant();
             this.style = style;
             this.fontId = FontId.parse(fontId);
             this.glyphCache = Concurrent.newMap();
@@ -629,6 +636,12 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
         @Override
         public @NotNull FontId fontId() {
             return this.fontId;
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public @NotNull Slant slant() {
+            return this.slant;
         }
 
         @Override
@@ -743,9 +756,9 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
 
         /**
          * Resolves an {@code .otf} file using a 3-tier strategy and returns the loaded AWT font
-         * alongside its filesystem location. Called exclusively from the enum constructor, so the
-         * JVM's per-class {@code <clinit>} monitor (JLS 12.4.2) guarantees mutual exclusion across
-         * enum values - no additional locks are required.
+         * alongside its filesystem location and the slant it declares. Called exclusively from the
+         * enum constructor, so the JVM's per-class {@code <clinit>} monitor (JLS 12.4.2) guarantees
+         * mutual exclusion across enum values - no additional locks are required.
          *
          * <ol>
          *   <li><b>Classpath</b>: when {@code /fonts/<fileName>} resolves via the classloader, the
@@ -768,7 +781,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
                 if (cpStream != null) {
                     Files.createDirectories(cachedPath.getParent());
                     Files.copy(cpStream, cachedPath, StandardCopyOption.REPLACE_EXISTING);
-                    return new Resolved(createFontFromPath(cachedPath), cachedPath);
+                    return loadFont(cachedPath);
                 }
             } catch (IOException ex) {
                 // Classpath present but I/O failed; fall through to filesystem/bootstrap rather than fail-fast.
@@ -776,7 +789,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
 
             // Tier 2: filesystem cache.
             if (Files.isRegularFile(cachedPath))
-                return new Resolved(createFontFromPath(cachedPath), cachedPath);
+                return loadFont(cachedPath);
 
             // Tier 3: auto-bootstrap via ToolingFonts.
             try {
@@ -789,19 +802,21 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             }
 
             if (Files.isRegularFile(cachedPath))
-                return new Resolved(createFontFromPath(cachedPath), cachedPath);
+                return loadFont(cachedPath);
 
             throw new IllegalStateException(bootstrapFailureMessage(fileName, classpathPath, cachedPath));
         }
 
         /**
-         * Reads an {@code .otf} file from disk, registers it with AWT, and derives to the native load size.
+         * Reads an {@code .otf} file from disk once, registers the font its bytes hold with AWT,
+         * derived to the native load size, and reads the {@link Slant} the same bytes declare.
          */
-        private static @NotNull Font createFontFromPath(@NotNull Path otfPath) {
-            try (InputStream in = Files.newInputStream(otfPath)) {
-                Font font = Font.createFont(Font.TRUETYPE_FONT, in).deriveFont(FONT_POINT_SIZE);
+        private static @NotNull Resolved loadFont(@NotNull Path otfPath) {
+            try {
+                byte[] otf = Files.readAllBytes(otfPath);
+                Font font = Font.createFont(Font.TRUETYPE_FONT, new ByteArrayInputStream(otf)).deriveFont(FONT_POINT_SIZE);
                 GraphicsEnvironment.getLocalGraphicsEnvironment().registerFont(font);
-                return font;
+                return new Resolved(font, otfPath, Slant.read(otf));
             } catch (IOException | FontFormatException ex) {
                 throw new IllegalStateException("Unable to load font from file '" + otfPath + "'", ex);
             }
@@ -819,9 +834,10 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
         }
 
         /**
-         * Internal result of {@link #resolveFont}: the loaded AWT font plus the on-disk path of its {@code .otf}.
+         * Internal result of {@link #resolveFont}: the loaded AWT font, the on-disk path of its
+         * {@code .otf} and the slant the file declares.
          */
-        private record Resolved(@NotNull Font font, @NotNull Path path) {}
+        private record Resolved(@NotNull Font font, @NotNull Path path, @NotNull Slant slant) {}
 
     }
 
@@ -1136,6 +1152,18 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             return this.fontId;
         }
 
+        /**
+         * {@inheritDoc}
+         * <p>
+         * A colour font answers the slant its merged {@code .ttf} declares, which is none for every
+         * file the generator writes, as its rows are bitmaps drawn upright. A codepoint it draws from
+         * its {@link #monoFallback() mono fallback} keeps the fallback's slant.
+         */
+        @Override
+        public @NotNull Slant slant() {
+            return this.strikes.slant();
+        }
+
         @Override
         public @NotNull Optional<Shape> monoOutline(int codepoint, double penX) {
             return this.monoFallback.monoOutline(codepoint, penX);
@@ -1256,24 +1284,35 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
 
             private final @NotNull SbixReader reader;
             private final byte @NotNull [] fontBytes;
+
+            /**
+             * The slant the font bytes declare.
+             */
+            private final @NotNull Slant slant;
+
             private final @NotNull ConcurrentMap<Long, Optional<PixelBuffer>> strikeCache = Concurrent.newMap();
             private volatile Font awtFont;
 
             /**
              * Returns the shared store for the given font bytes, constructing (and parsing) a
-             * {@link SbixReader} exactly once per distinct byte content and reusing it thereafter. The
-             * bytes are retained (the same array the reader already holds - no copy) so the backing AWT
-             * font can be built lazily from them.
+             * {@link SbixReader} and reading the {@link Slant} the bytes declare exactly once per
+             * distinct byte content and reusing both thereafter. The bytes are retained (the same
+             * array the reader already holds - no copy) so the backing AWT font can be built lazily
+             * from them.
              *
              * @param ttf the raw colour {@code .ttf} bytes
              * @return the shared store keyed by the bytes' content hash
              */
             static @NotNull SharedStrikes forBytes(byte @NotNull [] ttf) {
-                return BY_CONTENT.computeIfAbsent(contentKey(ttf), ignored -> new SharedStrikes(new SbixReader(ttf), ttf));
+                return BY_CONTENT.computeIfAbsent(contentKey(ttf), ignored -> new SharedStrikes(new SbixReader(ttf), ttf, Slant.read(ttf)));
             }
 
             @NotNull SbixReader reader() {
                 return this.reader;
+            }
+
+            @NotNull Slant slant() {
+                return this.slant;
             }
 
             /**
@@ -1485,6 +1524,12 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             return this.fontId;
         }
 
+        /** {@inheritDoc} */
+        @Override
+        public @NotNull Slant slant() {
+            return Slant.NONE;
+        }
+
         @Override
         public @NotNull Optional<Shape> monoOutline(int codepoint, double penX) {
             return Optional.of(AffineTransform.getTranslateInstance(penX, 0).createTransformedShape(this.outline));
@@ -1544,6 +1589,80 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
          */
         public static @NotNull Style of(int id) {
             return findById(id).orElse(REGULAR);
+        }
+
+    }
+
+    /**
+     * The slant a font's glyphs are drawn with, in mcPixels: a point {@code height} mcPixels above
+     * the baseline is drawn {@code shear * (height - pivot)} mcPixels right of where the upright
+     * glyph holds it, so the slant leaves the height {@code pivot} where it stands. The ratio is the
+     * same in output pixels, where the pivot lies {@code pivot * }{@link #MC_PIXEL_SCALE} above the
+     * baseline.
+     * <p>
+     * A font file declares it in the caret its {@code hhea} table describes. The caret's rise and run
+     * give the shear, {@code run / rise}, as an exact ratio; its offset is how far the slant moves
+     * the baseline, in font units, which places the pivot at {@code -offset * rise / run} units,
+     * {@code unitsPerEm / 8} of them an mcPixel. The {@code post} table's italic angle states the same
+     * lean, but as a 16.16 fixed-point angle whose tangent is not the ratio the glyphs were slanted
+     * by - the italic faces' {@code -14.0362} degrees answers {@code 0.24999993} for their quarter -
+     * and with no pivot, so it is not read. A caret standing upright, or lying flat, declares no
+     * slant.
+     *
+     * @param shear the mcPixels a point moves right per mcPixel of height
+     * @param pivot the height above the baseline, in mcPixels, the slant moves no point at
+     */
+    record Slant(float shear, float pivot) {
+
+        /**
+         * The slant of an upright font, which moves no point.
+         */
+        public static final @NotNull Slant NONE = new Slant(0f, 0f);
+
+        /**
+         * Where a {@code head} table holds its {@code uint16 unitsPerEm}.
+         */
+        private static final int HEAD_UNITS_PER_EM = 18;
+
+        /**
+         * Where an {@code hhea} table holds its {@code int16 caretSlopeRise}, followed by its
+         * {@code caretSlopeRun} and its {@code caretOffset}.
+         */
+        private static final int HHEA_CARET_SLOPE_RISE = 18;
+
+        /**
+         * Reads the slant an sfnt font file declares in its {@code hhea} caret, converting its offset
+         * by the {@code head} table's units per em.
+         *
+         * @param sfnt the raw font bytes
+         * @return the slant, {@link #NONE} where the caret stands upright or lies flat, or the file
+         * holds no {@code head} or {@code hhea} table
+         */
+        static @NotNull Slant read(byte @NotNull [] sfnt) {
+            int head = SbixReader.tableOffset(sfnt, "head");
+            int hhea = SbixReader.tableOffset(sfnt, "hhea");
+            if (head < 0 || hhea < 0) return NONE;
+
+            ByteBuffer buffer = ByteBuffer.wrap(sfnt);
+            int unitsPerEm = Short.toUnsignedInt(buffer.getShort(head + HEAD_UNITS_PER_EM));
+            int rise = buffer.getShort(hhea + HHEA_CARET_SLOPE_RISE);
+            int run = buffer.getShort(hhea + HHEA_CARET_SLOPE_RISE + 2);
+            int offset = buffer.getShort(hhea + HHEA_CARET_SLOPE_RISE + 4);
+            if (rise == 0 || run == 0) return NONE;
+
+            double pivotUnits = -(double) offset * rise / run;
+            float pivot = (float) (FontUnits.toOutputPixels(pivotUnits, unitsPerEm) / MC_PIXEL_SCALE);
+            return new Slant((float) run / rise, pivot);
+        }
+
+        /**
+         * Returns how far the slant moves a point at a height above the baseline.
+         *
+         * @param height the point's height above the baseline, in mcPixels
+         * @return the distance it moves right, in mcPixels
+         */
+        public float shift(float height) {
+            return this.shear * (height - this.pivot);
         }
 
     }

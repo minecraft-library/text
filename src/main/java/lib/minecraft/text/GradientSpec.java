@@ -3,6 +3,7 @@ package lib.minecraft.text;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import lib.minecraft.text.font.MinecraftFont;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -34,7 +35,8 @@ import java.util.Objects;
  * @param hueCycles {@link Mode#RAINBOW} hue revolutions across the segment; normalized to {@code 1}
  *     for every other mode (ignored there)
  * @param bandPx quantization band width in output px, {@link #PER_LETTER} = per-letter
- * @param shear band slant as dx per +1 py above baseline, {@link #AUTO_SHEAR} = match segment italic
+ * @param shear band slant as dx per +1 py above baseline, {@link #AUTO_SHEAR} = the slant of the
+ *     segment's font
  * @param scroll the scroll animation, or {@code null} for a static gradient
  */
 public record GradientSpec(
@@ -53,8 +55,10 @@ public record GradientSpec(
     public static final int PER_LETTER = 0;
 
     /**
-     * {@link #shear()} sentinel selecting the automatic slant: {@link MinecraftFont#ITALIC_SHEAR}
-     * when the owning segment is italic, otherwise {@code 0} (vertical bands).
+     * {@link #shear()} sentinel selecting the automatic slant: the {@link MinecraftFont#slant() slant}
+     * of the font the owning segment is drawn in, about the height it pivots on - the italic faces'
+     * lean for an italic segment in the default font, and none (vertical bands) for a segment in an
+     * upright font.
      */
     public static final float AUTO_SHEAR = Float.NaN;
 
@@ -363,7 +367,7 @@ public record GradientSpec(
         }
 
         /**
-         * Sets the band slant, {@link #AUTO_SHEAR} to match the segment italic.
+         * Sets the band slant, {@link #AUTO_SHEAR} to follow the slant of the segment's font.
          *
          * @param shear the slant as dx per +1 py above baseline
          * @return this builder

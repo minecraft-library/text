@@ -248,6 +248,8 @@ Each `MinecraftFont` enum value wraps a pre-loaded AWT `Font` and a lazy glyph a
 
 The OTFs use `unitsPerEm = 1024` with `128 units = 1 mcPixel`, and `MC_PIXEL_SCALE = 2` maps vanilla Minecraft pixels to output pixels at the standard load size.
 
+The italic faces carry the client's italic slant in their outlines - a quarter mcPixel right per mcPixel of height, about the height 3 mcPixels above the baseline - and declare it in their `hhea` caret: rise 4, run 1, offset -96 units. `MinecraftFont#slant()` reads it from the file each font loads and answers it as a `MinecraftFont.Slant` in mcPixels, for what a caller lays along a run that should lean with its glyphs, such as a gradient's colour bands. A font whose file declares no slant, and the missing font, answer `Slant.NONE`.
+
 ## Project Structure
 
 ```

@@ -3,8 +3,8 @@ package lib.minecraft.text.font;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
 /**
  * A pure-Java reader for the {@code sbix} table - the bitmap-strike storage colour pack fonts use.
@@ -24,7 +24,6 @@ import java.util.Map;
 public final class SbixReader {
 
     private final byte[] data;
-    private final Map<String, int[]> directory = new HashMap<>();
     private final int numGlyphs;
     private final int sbixOffset;
 
@@ -36,20 +35,35 @@ public final class SbixReader {
      */
     public SbixReader(byte[] ttf) {
         this.data = ttf;
-        parseDirectory();
-        int[] maxp = this.directory.get("maxp");
-        if (maxp == null) throw new IllegalArgumentException("Font has no 'maxp' table; not a valid sfnt.");
-        this.numGlyphs = u16(maxp[0] + 4);
-        int[] sbix = this.directory.get("sbix");
-        if (sbix == null) throw new IllegalArgumentException("Font has no 'sbix' table; not a colour bitmap font.");
-        this.sbixOffset = sbix[0];
+        int maxp = tableOffset(ttf, "maxp");
+        if (maxp < 0) throw new IllegalArgumentException("Font has no 'maxp' table; not a valid sfnt.");
+        this.numGlyphs = u16(maxp + 4);
+        int sbix = tableOffset(ttf, "sbix");
+        if (sbix < 0) throw new IllegalArgumentException("Font has no 'sbix' table; not a colour bitmap font.");
+        this.sbixOffset = sbix;
     }
 
-    private void parseDirectory() {
-        int numTables = u16(4);
-        int p = 12;
-        for (int i = 0; i < numTables; i++, p += 16)
-            this.directory.put(tag(p), new int[]{(int) u32(p + 8), (int) u32(p + 12)});
+    /**
+     * Returns where a table starts in an sfnt font file, read from the file's table directory: a
+     * {@code uint16} table count at byte 4, then a 16-byte record per table from byte 12, each its
+     * four-character tag and, 8 bytes in, the table's {@code uint32} offset from the start of the
+     * file.
+     *
+     * @param sfnt the raw font bytes
+     * @param tag the table's four-character tag
+     * @return the table's offset from the start of the file, or {@code -1} when the file holds no
+     * table under the tag
+     */
+    static int tableOffset(byte @NotNull [] sfnt, @NotNull String tag) {
+        ByteBuffer buffer = ByteBuffer.wrap(sfnt);
+        int numTables = Short.toUnsignedInt(buffer.getShort(4));
+
+        for (int i = 0, record = 12; i < numTables; i++, record += 16) {
+            if (tag.equals(new String(sfnt, record, 4, StandardCharsets.ISO_8859_1)))
+                return buffer.getInt(record + 8);
+        }
+
+        return -1;
     }
 
     /**
