@@ -52,8 +52,18 @@ import java.util.function.Function;
  * value as vanilla compares it - so {@code red} equals {@code #FF5555}.</p>
  *
  * <p>A segment is also the run the font renderer draws. {@link #toLines()} flattens a component into
- * {@link LineSegment lines} of segments, each plain text in the style it is shown in, and
- * {@link #fromLegacy(String, char)} reads section-coded text straight into such runs.</p>
+ * {@link LineSegment lines} of runs, and {@link #fromLegacy(String, char)} reads section-coded text
+ * straight into a line of them. Each run is plain text in the style it is shown in, and a line is cut
+ * into runs wherever the style changes, as the client's font cuts one by its {@code Style#equals} - the
+ * colour by its value, the shadow colour by its ARGB value, each flag three-state, the click and hover
+ * events, the insertion and the font. Neighbours in one style are one run and empty text is no run and
+ * cuts none. Three things keep two neighbours in one style apart: a gradient on either side, so each
+ * gradient spreads over its own run; the edge of a sprite, which the client draws as a run of its own in
+ * the sprite's font; and a lone high surrogate ending one where a lone low surrogate opens the other,
+ * which the client draws as two replacement characters rather than one codepoint. A run therefore opens
+ * where the client's font opens one, which is where the client leads an underline or strikethrough one
+ * mcPixel left of the first glyph. The client also cuts a line it reorders for right-to-left text at
+ * each visual run, and no such reordering is modelled here.</p>
  */
 @Getter
 @ToString
@@ -245,13 +255,17 @@ public final class TextSegment {
 
     /**
      * Flattens this segment and its siblings into lines of runs - each run plain text in the style it is
-     * shown in, inherited style resolved, and a new line begun at each {@code \n}.
+     * shown in, inherited style resolved, and a new line begun at each {@code \n}. Neighbours in one style
+     * on a line are one run and empty text is none, as the client's font cuts a line, save where a
+     * gradient on either side, the edge of a sprite or a surrogate pair split between them keeps the two
+     * apart.
      *
      * @return the lines, at least one
      */
     public @NotNull ConcurrentList<LineSegment> toLines() {
         ConcurrentList<LineSegment> lines = Concurrent.newList();
         List<TextSegment> line = new ArrayList<>();
+        int[] joinsFrom = { 0 };
 
         this.flatten(null, run -> {
             String[] pieces = run.getText().split("\n", -1);
@@ -260,12 +274,12 @@ public final class TextSegment {
                 if (i > 0) {
                     lines.add(LineSegment.builder().segments(Concurrent.newList(line)).build());
                     line.clear();
+                    joinsFrom[0] = 0;
                 }
 
-                if (!pieces[i].isEmpty())
-                    line.add(run.run(pieces[i]));
+                appendRun(line, run.run(pieces[i]), joinsFrom[0]);
             }
-        });
+        }, () -> joinsFrom[0] = line.size());
 
         lines.add(LineSegment.builder().segments(Concurrent.newList(line)).build());
         return lines;
@@ -314,7 +328,7 @@ public final class TextSegment {
             }
 
             builder.append(run.getText());
-        });
+        }, () -> {});
 
         return builder.toString();
     }
@@ -441,17 +455,20 @@ public final class TextSegment {
      * to person. In case the string does not have a {@link ChatFormat#SECTION_SYMBOL}, the method also checks for the
      * {@code symbolSubstitute}.
      * <p>
-     * A colour code starts a run in that colour with no format; a format code turns that format on for the
-     * run it starts; {@code r} starts a white run with no format. A code is matched as written, so an
+     * A colour code starts a run in that colour with no format; a format code turns that format on and keeps
+     * the colour and the formats already on, as the client's {@code Style#applyLegacyFormat} applies one;
+     * {@code r} starts a white run with no format. A code is matched as written, so an
      * upper-case letter or a character that is no code stays in the text along with the symbol before it.
-     * Each run's text takes the substitution {@link Builder#text(String)} applies.
+     * Each run's text takes the substitution {@link Builder#text(String)} applies. A run in the style of the
+     * run before it joins that run and a code no text follows starts none, as {@link #toLines()} answers a
+     * line's runs.
      *
      * @param legacyText The text to make into an object
      * @param symbolSubstitute The character substitute
      * @return A LineSegment representing the legacy text
      */
     public static @NotNull LineSegment fromLegacy(@NotNull String legacyText, char symbolSubstitute) {
-        LineSegment.Builder line = LineSegment.builder();
+        List<TextSegment> runs = new ArrayList<>();
         Builder current = builder();
         StringBuilder buf = new StringBuilder();
 
@@ -477,8 +494,7 @@ public final class TextSegment {
 
             // Flush buffered text before applying the new code
             if (!buf.isEmpty()) {
-                line.addSegment(current.text(buf.toString()).build());
-                current = builder();
+                appendRun(runs, current.text(buf.toString()).build(), 0);
                 buf.setLength(0);
             }
 
@@ -504,8 +520,8 @@ public final class TextSegment {
             }
         }
 
-        line.addSegment(current.text(buf.toString()).build());
-        return line.build();
+        appendRun(runs, current.text(buf.toString()).build(), 0);
+        return LineSegment.builder().segments(Concurrent.newList(runs)).build();
     }
 
     /**
@@ -549,19 +565,27 @@ public final class TextSegment {
 
     /**
      * Visits the runs this segment and its siblings show, in order, each in the style it inherits from
-     * {@code parent} where it sets none of its own.
+     * {@code parent} where it sets none of its own, and runs {@code cut} on either side of a sprite's runs,
+     * since the client draws a sprite as a run of its own in the sprite's font.
      */
-    private void flatten(@Nullable TextSegment parent, @NotNull Consumer<TextSegment> runs) {
+    private void flatten(@Nullable TextSegment parent, @NotNull Consumer<TextSegment> runs, @NotNull Runnable cut) {
         TextSegment styled = parent == null ? this : this.inherit(parent);
 
         switch (this.contents) {
             case TextContents.Text text -> runs.accept(styled.run(text.text()));
-            case TextContents.Translatable translatable -> translatable.decompose().forEach(part -> part.flatten(styled, runs));
-            case TextContents.Sprite sprite when sprite.fallback().isPresent() -> sprite.fallback().get().flatten(styled, runs);
+            case TextContents.Translatable translatable -> translatable.decompose().forEach(part -> part.flatten(styled, runs, cut));
+            case TextContents.Sprite sprite -> {
+                cut.run();
+                sprite.fallback().ifPresentOrElse(
+                    fallback -> fallback.flatten(styled, runs, cut),
+                    () -> runs.accept(styled.run(sprite.plainText()))
+                );
+                cut.run();
+            }
             default -> runs.accept(styled.run(this.contents.plainText()));
         }
 
-        this.extra.forEach(sibling -> sibling.flatten(styled, runs));
+        this.extra.forEach(sibling -> sibling.flatten(styled, runs, cut));
     }
 
     /**
@@ -590,6 +614,61 @@ public final class TextSegment {
      */
     private @NotNull TextSegment run(@NotNull String text) {
         return this.mutate().contents(new TextContents.Text(text)).extra(List.of()).build();
+    }
+
+    /**
+     * Returns whether {@code next} continues this run where it follows it, as the client's font keeps
+     * one run while its {@code Style#equals} holds between two neighbouring characters - the colour by
+     * its value, the shadow colour by its ARGB value, each flag three-state, the click and hover events,
+     * the insertion and the font - and neither carries a gradient, which spreads over its own run.
+     *
+     * @param next the run following this one
+     * @return whether the two are one run
+     */
+    private boolean joins(@NotNull TextSegment next) {
+        return this.gradient.isEmpty()
+            && next.gradient.isEmpty()
+            && this.colorValue().equals(next.colorValue())
+            && this.shadowColorValue().equals(next.shadowColorValue())
+            && this.bold.equals(next.bold)
+            && this.italic.equals(next.italic)
+            && this.underlined.equals(next.underlined)
+            && this.strikethrough.equals(next.strikethrough)
+            && this.obfuscated.equals(next.obfuscated)
+            && this.clickEvent.equals(next.clickEvent)
+            && this.hoverEvent.equals(next.hoverEvent)
+            && this.insertion.equals(next.insertion)
+            && this.font.equals(next.font);
+    }
+
+    /**
+     * Ends a line's runs with {@code run} as the client's font cuts a line: empty text is no run, and a run
+     * the last one {@link #joins(TextSegment) joins} extends it by its text, in the last one's style, as the
+     * client's run takes the style of its first character. The last run is not extended where it sits
+     * before {@code joinsFrom}, as the edge of a sprite leaves it, or where the join would fuse a lone high
+     * surrogate ending it and a lone low surrogate opening {@code run} into one codepoint, since the client
+     * draws each half as a replacement character.
+     *
+     * @param runs the line's runs so far
+     * @param run the plain-text run following them
+     * @param joinsFrom the index of the first run a later one may extend
+     */
+    private static void appendRun(@NotNull List<TextSegment> runs, @NotNull TextSegment run, int joinsFrom) {
+        String text = run.getText();
+
+        if (text.isEmpty())
+            return;
+
+        TextSegment last = runs.size() > joinsFrom ? runs.getLast() : null;
+        String lastText = last == null ? "" : last.getText();
+        boolean splitsPair = !lastText.isEmpty()
+            && Character.isHighSurrogate(lastText.charAt(lastText.length() - 1))
+            && Character.isLowSurrogate(text.charAt(0));
+
+        if (last != null && !splitsPair && last.joins(run))
+            runs.set(runs.size() - 1, last.run(lastText + text));
+        else
+            runs.add(run);
     }
 
     /**
