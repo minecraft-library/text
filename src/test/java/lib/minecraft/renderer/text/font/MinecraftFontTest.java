@@ -24,6 +24,7 @@ import java.io.StringReader;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
@@ -287,6 +288,46 @@ class MinecraftFontTest {
     }
 
     @Test
+    @DisplayName("a glyph whose bounds start off the pixel grid keeps its first and last column and row: an italic '(' and '4' and a regular U+02C6 and U+02D7 draw exactly the pixels their outline covers")
+    void aGlyphOffThePixelGridKeepsItsLastColumnAndRow() {
+        List<Map.Entry<MinecraftFont.Vanilla, Integer>> subjects = List.of(
+            Map.entry(MinecraftFont.Vanilla.ITALIC, (int) '('),
+            Map.entry(MinecraftFont.Vanilla.ITALIC, (int) '4'),
+            Map.entry(MinecraftFont.Vanilla.REGULAR, 0x02C6),
+            Map.entry(MinecraftFont.Vanilla.REGULAR, 0x02D7)
+        );
+        List<Executable> checks = new ArrayList<>();
+
+        for (Map.Entry<MinecraftFont.Vanilla, Integer> subject : subjects) {
+            MinecraftFont.Vanilla font = subject.getKey();
+            int codepoint = subject.getValue();
+            MinecraftGlyph glyph = font.glyph(codepoint);
+            Shape outline = font.monoOutline(codepoint, 0).orElseThrow();
+            String label = String.format("%s U+%04X", font, codepoint);
+            checks.add(() -> assertThat(label, offTheOutline(glyph, outline, false), is(empty())));
+        }
+
+        assertAll(checks);
+    }
+
+    @Test
+    @DisplayName("every printable ASCII glyph of every vanilla face lights each pixel its outline covers")
+    void everyAsciiGlyphLightsEachPixelItsOutlineCovers() {
+        List<Executable> checks = new ArrayList<>();
+
+        for (MinecraftFont.Vanilla font : MinecraftFont.Vanilla.values()) {
+            for (int codepoint = ' '; codepoint <= '~'; codepoint++) {
+                MinecraftGlyph glyph = font.glyph(codepoint);
+                Shape outline = font.monoOutline(codepoint, 0).orElseThrow();
+                String label = String.format("%s '%c'", font, codepoint);
+                checks.add(() -> assertThat(label, offTheOutline(glyph, outline, true), is(empty())));
+            }
+        }
+
+        assertAll(checks);
+    }
+
+    @Test
     @DisplayName("the missing font has no backing AWT font: glyph code 0 for every codepoint, getFont throws, and the regular font's line geometry")
     void theMissingFontHasNoBackingAwtFont() {
         MinecraftFont missing = MinecraftFont.Missing.INSTANCE;
@@ -362,6 +403,37 @@ class MinecraftFontTest {
                 int expected = BOX.contains(x, baselineY) && !HOLLOW.contains(x, baselineY) ? 0xFFFFFFFF : 0;
                 if (buffer.getPixel(x, y) != expected)
                     wrong.add(String.format("(%d,%d) %08X not %08X", x, y, buffer.getPixel(x, y), expected));
+            }
+        }
+
+        return wrong;
+    }
+
+    /**
+     * Lists every pixel about the pen and the baseline where a glyph's bitmap, laid at its bearing,
+     * disagrees with the pixel centres its outline covers.
+     *
+     * @param glyph the glyph under test
+     * @param outline the glyph's outline at the same pen and baseline
+     * @param unlitOnly whether to list only the covered pixels the bitmap leaves unlit, and not the lit
+     * ones the outline does not cover
+     * @return each disagreeing pixel as its position and which side lights it
+     */
+    private static @NotNull List<String> offTheOutline(@NotNull MinecraftGlyph glyph, @NotNull Shape outline, boolean unlitOnly) {
+        PixelBuffer bitmap = glyph.bitmap();
+        Rectangle drawn = new Rectangle(glyph.bearingX(), glyph.bearingY(), bitmap.width(), bitmap.height());
+        Rectangle area = outline.getBounds().union(drawn);
+        area.grow(1, 1);
+        List<String> wrong = new ArrayList<>();
+
+        for (int y = area.y; y < area.y + area.height; y++) {
+            for (int x = area.x; x < area.x + area.width; x++) {
+                boolean covered = outline.contains(x + 0.5, y + 0.5);
+                boolean lit = drawn.contains(x, y) && bitmap.getPixel(x - drawn.x, y - drawn.y) >>> 24 != 0;
+                if (covered && !lit)
+                    wrong.add(String.format("(%d,%d) unlit", x, y));
+                else if (lit && !covered && !unlitOnly)
+                    wrong.add(String.format("(%d,%d) lit outside the outline", x, y));
             }
         }
 

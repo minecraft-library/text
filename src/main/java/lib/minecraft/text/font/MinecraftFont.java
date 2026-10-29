@@ -705,7 +705,15 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
          * Rasterizes a single glyph as white-on-transparent into a {@link PixelBuffer}. Queries the
          * AWT {@link FontMetrics} and {@link FontRenderContext} captured at init rather than spinning
          * up a throwaway scratch {@link Graphics2D} for every codepoint - only the per-glyph
-         * {@link BufferedImage} (sized to the visual bounds) is newly allocated.
+         * {@link BufferedImage} is newly allocated.
+         * <p>
+         * The glyph is drawn over every pixel the visual bounds reach into: its bearing is the pixel
+         * holding their top left corner, and the drawing ends with the last column and row they
+         * enter, so a glyph whose bounds start part way into a pixel keeps the last column and row
+         * its outline covers.
+         *
+         * @param codepoint the codepoint to rasterize
+         * @return the glyph, its bitmap laid about the pen and the baseline by its bearing
          */
         private @NotNull MinecraftGlyph rasterizeGlyph(int codepoint) {
             int advanceWidth = this.awtMetrics.charWidth(codepoint);
@@ -713,10 +721,10 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
             GlyphVector gv = this.actual.createGlyphVector(this.awtFrc, chars);
             Rectangle2D bounds = gv.getVisualBounds();
 
-            int bw = Math.max(1, (int) Math.ceil(bounds.getWidth()));
-            int bh = Math.max(1, (int) Math.ceil(bounds.getHeight()));
             int bearingX = (int) Math.floor(bounds.getX());
             int bearingY = (int) Math.floor(bounds.getY());
+            int bw = Math.max(1, (int) Math.ceil(bounds.getMaxX()) - bearingX);
+            int bh = Math.max(1, (int) Math.ceil(bounds.getMaxY()) - bearingY);
 
             BufferedImage glyphImage = new BufferedImage(bw, bh, BufferedImage.TYPE_INT_ARGB);
             Graphics2D gg = glyphImage.createGraphics();
