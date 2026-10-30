@@ -108,6 +108,34 @@ public final class MinecraftFontMetrics extends FontMetrics {
         return (int) Math.ceil(stringAdvanceMcPixels(text));
     }
 
+    /**
+     * Measures out the head of a string that fits a width in whole mcPixels, as the client's
+     * {@code Font#plainSubstrByWidth} does. Walks codepoints, as {@link #stringAdvanceX(String)} does,
+     * taking each one's advance in mcPixels as a {@code float} from what is left of the width, and keeps
+     * each codepoint while what is left is not negative - so a codepoint ending exactly on the width is
+     * kept, and one ending half an mcPixel past it is not. The walk stops at the first codepoint it does
+     * not keep, even where a negative advance after it would bring the run back within the width, and a
+     * surrogate pair is kept or dropped whole. The text is read plain, a format code measured as the
+     * characters it is written with.
+     *
+     * @param text the text to cut
+     * @param maxWidthMcPixels the width the head may run to, in whole mcPixels
+     * @return the text up to the first codepoint that does not fit, empty when that is its first
+     */
+    public @NotNull String stringHeadByWidthMcPixels(@NotNull String text, int maxWidthMcPixels) {
+        float remaining = maxWidthMcPixels;
+        int end = 0;
+        while (end < text.length()) {
+            int codepoint = text.codePointAt(end);
+            remaining -= (float) (advanceOf(codepoint) / MinecraftFont.MC_PIXEL_SCALE);
+            if (remaining < 0)
+                break;
+
+            end += Character.charCount(codepoint);
+        }
+        return text.substring(0, end);
+    }
+
     @Override
     public int stringWidth(@NotNull String str) {
         return Math.round((float) stringAdvanceX(str));

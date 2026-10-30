@@ -530,6 +530,67 @@ class MinecraftGlyphVectorTest {
     }
 
     @Test
+    @DisplayName("stringHeadByWidthMcPixels keeps a codepoint ending exactly on the width, as the client's Font#plainSubstrByWidth does")
+    void stringHeadByWidthMcPixelsKeepsAnExactFit() {
+        MinecraftFontMetrics metrics = MinecraftFont.Vanilla.REGULAR.metrics();   // 'A' is 6 mcPx
+        assertThat(metrics.stringHeadByWidthMcPixels("AAA", 12), is("AA"));
+        assertThat(metrics.stringHeadByWidthMcPixels("AAA", 11), is("A"));
+        assertThat(metrics.stringHeadByWidthMcPixels("AAA", 18), is("AAA"));
+    }
+
+    @Test
+    @DisplayName("stringHeadByWidthMcPixels drops a codepoint ending half an mcPixel past the width, and sums half advances exactly")
+    void stringHeadByWidthMcPixelsDropsAHalfPixelOverrun() {
+        MinecraftFontMetrics metrics = MinecraftFont.Vanilla.REGULAR.metrics();
+        String star = cp(0x2726);   // BLACK FOUR POINTED STAR, 7.5 mcPx
+        assertThat(metrics.stringAdvanceMcPixels("A" + star), is(13.5f));
+        assertThat(metrics.stringHeadByWidthMcPixels("A" + star, 13), is("A"));
+        assertThat(metrics.stringHeadByWidthMcPixels("A" + star, 14), is("A" + star));
+        assertThat(metrics.stringHeadByWidthMcPixels(star + star, 15), is(star + star));
+        assertThat(metrics.stringHeadByWidthMcPixels(star + star, 14), is(star));
+    }
+
+    @Test
+    @DisplayName("stringHeadByWidthMcPixels keeps or drops a surrogate pair whole")
+    void stringHeadByWidthMcPixelsKeepsASurrogatePairWhole() {
+        MinecraftFontMetrics metrics = MinecraftFont.Vanilla.REGULAR.metrics();
+        String astral = cp(0x1D400);   // MATHEMATICAL BOLD CAPITAL A, 9 mcPx, two chars
+        String text = "A" + astral + "A";   // 6 + 9 + 6 = 21 mcPx
+        assertThat(metrics.stringAdvanceMcPixels(astral), is(9f));
+        assertThat(metrics.stringHeadByWidthMcPixels(text, 15), is("A" + astral));
+        assertThat(metrics.stringHeadByWidthMcPixels(text, 14), is("A"));
+        assertThat(metrics.stringHeadByWidthMcPixels(text, 21), is(text));
+    }
+
+    @Test
+    @DisplayName("stringHeadByWidthMcPixels answers nothing for empty text or a width its first codepoint overruns")
+    void stringHeadByWidthMcPixelsOfNothing() {
+        MinecraftFontMetrics metrics = MinecraftFont.Vanilla.REGULAR.metrics();
+        assertThat(metrics.stringHeadByWidthMcPixels("", 10), is(""));
+        assertThat(metrics.stringHeadByWidthMcPixels("", 0), is(""));
+        assertThat(metrics.stringHeadByWidthMcPixels("A", 0), is(""));
+        assertThat(metrics.stringHeadByWidthMcPixels("A", 5), is(""));
+    }
+
+    @Test
+    @DisplayName("stringHeadByWidthMcPixels stops at the first codepoint that overruns, though a negative advance after it would bring the run back")
+    void stringHeadByWidthMcPixelsStopsAtTheFirstOverrun() {
+        MinecraftFont.Color font = ColorFontFixtures.demoFont();
+        String flat = cp(ColorFontFixtures.CP_FLAT);        // 8 mcPx
+        String back = cp(ColorFontFixtures.CP_NEG_SPACE);   // -8 mcPx
+        assertThat(font.metrics().stringAdvanceMcPixels(flat + flat + back), is(8f));
+        assertThat(font.metrics().stringHeadByWidthMcPixels(flat + flat + back, 8), is(flat));
+    }
+
+    @Test
+    @DisplayName("stringHeadByWidthMcPixels cuts 'Enchanted Golden Apple' at 103 mcPx after its 'A', the 'p' reaching 105")
+    void stringHeadByWidthMcPixelsCutsAnItemName() {
+        MinecraftFontMetrics metrics = MinecraftFont.Vanilla.REGULAR.metrics();
+        assertThat(metrics.stringAdvanceMcPixels("Enchanted Golden A"), is(99f));
+        assertThat(metrics.stringHeadByWidthMcPixels("Enchanted Golden Apple", 103), is("Enchanted Golden A"));
+    }
+
+    @Test
     @DisplayName("a mixed mono + colour + space run paints through one layout call with zero caller branching")
     void mixedRunPaintsThroughOneCall() {
         MinecraftFont.Color font = ColorFontFixtures.demoFont();
