@@ -1483,7 +1483,7 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
          * where the client's is: on the box's first and last column and its first and last row.
          */
         private static @NotNull PixelBuffer drawBox() {
-            PixelBuffer box = PixelBuffer.create(BOX_WIDTH * MC_PIXEL_SCALE, BOX_HEIGHT * MC_PIXEL_SCALE);
+            PixelBuffer box = PixelBuffer.straight(BOX_WIDTH * MC_PIXEL_SCALE, BOX_HEIGHT * MC_PIXEL_SCALE);
 
             for (int y = 0; y < box.height(); y++) {
                 for (int x = 0; x < box.width(); x++) {

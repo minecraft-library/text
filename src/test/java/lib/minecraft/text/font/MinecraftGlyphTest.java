@@ -1,6 +1,7 @@
 package lib.minecraft.text.font;
 
 import dev.simplified.image.PixelBuffer;
+import dev.simplified.image.pixel.AlphaMode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +14,7 @@ class MinecraftGlyphTest {
     @Test
     @DisplayName("the five-arg mono form is never colour, mirrors advanceWidth, and is kind MONO")
     void monoFormIsUnchanged() {
-        PixelBuffer bitmap = PixelBuffer.create(2, 2);
+        PixelBuffer bitmap = PixelBuffer.straight(2, 2);
         MinecraftGlyph glyph = new MinecraftGlyph('A', bitmap, 7, -1, -3);
         assertThat(glyph.codepoint(), is((int) 'A'));
         assertThat(glyph.color(), is(false));
@@ -38,7 +39,7 @@ class MinecraftGlyphTest {
     @Test
     @DisplayName("the colour factory flags colour, keeps a fractional signed advance, a rounded advanceWidth, and is kind RASTER")
     void colourFactoryCarriesColourAndFractionalAdvance() {
-        PixelBuffer bitmap = PixelBuffer.create(4, 4);
+        PixelBuffer bitmap = PixelBuffer.straight(4, 4);
         MinecraftGlyph glyph = MinecraftGlyph.color(0xE001, bitmap, 1.5f, 2, -4);
         assertThat(glyph.codepoint(), is(0xE001));
         assertThat(glyph.color(), is(true));
@@ -52,7 +53,7 @@ class MinecraftGlyphTest {
     }
 
     @Test
-    @DisplayName("the space factory is an advance-only sentinel: not colour, never null bitmap, kind SPACE")
+    @DisplayName("the space factory is an advance-only sentinel: not colour, never null bitmap, a straight 1x1, kind SPACE")
     void spaceFactoryIsAdvanceOnlySentinel() {
         MinecraftGlyph glyph = MinecraftGlyph.space(0xE010, -16.0f);
         assertThat(glyph.codepoint(), is(0xE010));
@@ -64,12 +65,13 @@ class MinecraftGlyphTest {
         assertThat(glyph.kind(), is(MinecraftGlyphVector.Kind.SPACE));
         assertThat(glyph.bitmap().width(), is(1));    // 1x1 transparent sentinel, never null
         assertThat(glyph.bitmap().height(), is(1));
+        assertThat(glyph.bitmap().alphaMode(), is(AlphaMode.STRAIGHT));   // as every glyph bitmap the library makes
     }
 
     @Test
     @DisplayName("at(penX) copies the glyph with only the pen changed")
     void atStampsPenOnly() {
-        MinecraftGlyph canonical = MinecraftGlyph.color(0xE001, PixelBuffer.create(4, 4), 1.5f, 2, -4, 3, 8);
+        MinecraftGlyph canonical = MinecraftGlyph.color(0xE001, PixelBuffer.straight(4, 4), 1.5f, 2, -4, 3, 8);
         MinecraftGlyph positioned = canonical.at(17.5);
 
         assertThat(canonical.penX(), is(0.0));

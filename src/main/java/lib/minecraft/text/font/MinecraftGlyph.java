@@ -89,7 +89,7 @@ public record MinecraftGlyph(
      * sentinel. Immutable in practice - the blit path only reads glyph bitmaps - so one instance is
      * safe to share.
      */
-    private static final @NotNull PixelBuffer SPACE_BITMAP = PixelBuffer.create(1, 1);
+    private static final @NotNull PixelBuffer SPACE_BITMAP = PixelBuffer.straight(1, 1);
 
     /**
      * Constructs a monochrome glyph: {@code color = false}, {@code signedAdvance = advanceWidth}, a

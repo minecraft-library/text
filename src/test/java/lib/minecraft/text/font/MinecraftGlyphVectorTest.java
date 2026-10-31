@@ -35,6 +35,12 @@ class MinecraftGlyphVectorTest {
      */
     private static final int FILL = 0xF00F000F;
 
+    /**
+     * The tooltip's fill as straight colour, which a canvas filled with it holds as {@link #FILL}: {@code 0x10} at
+     * alpha {@code 0xF0} is {@code 16 * 240 / 255 = 15.06}, held as {@code 0x0F}.
+     */
+    private static final int FILL_STRAIGHT = 0xF0100010;
+
     private static String cp(int codepoint) {
         return new String(Character.toChars(codepoint));
     }
@@ -122,7 +128,7 @@ class MinecraftGlyphVectorTest {
         MinecraftFont.Color font = ColorFontFixtures.demoFont();
         MinecraftGlyphVector vector = font.layout(cp(ColorFontFixtures.CP_FLAT));
 
-        PixelBuffer target = PixelBuffer.create(16, 16);
+        PixelBuffer target = PixelBuffer.canvas(16, 16);
         target.fill(0);
         MinecraftGraphics graphics = new MinecraftGraphics(target);
         vector.paint(graphics, 0, 0, Color.RED);
@@ -158,7 +164,7 @@ class MinecraftGlyphVectorTest {
         assertThat(glyph.originX(), is(2));
         assertThat(glyph.originY(), is(3));
 
-        PixelBuffer target = PixelBuffer.create(16, 16);
+        PixelBuffer target = PixelBuffer.canvas(16, 16);
         target.fill(0);
         MinecraftGraphics graphics = new MinecraftGraphics(target);
         vector.paint(graphics, 0, 0, Color.WHITE);
@@ -177,7 +183,7 @@ class MinecraftGlyphVectorTest {
 
         // Each fill would tint a mono glyph green; the see-through two would also scale or discard its pixels.
         for (Color fill : List.of(Color.GREEN, new Color(0, 255, 0, 25), new Color(0, 255, 0, 0x80))) {
-            PixelBuffer target = PixelBuffer.create(16, 16);
+            PixelBuffer target = PixelBuffer.canvas(16, 16);
             target.fill(0);
             MinecraftGraphics graphics = new MinecraftGraphics(target);
             vector.paint(graphics, 0, 0, fill);
@@ -291,7 +297,7 @@ class MinecraftGlyphVectorTest {
     @Test
     @DisplayName("backcompat: drawString still renders vanilla text into the buffer")
     void drawStringStillRenders() {
-        PixelBuffer target = PixelBuffer.create(64, 32);
+        PixelBuffer target = PixelBuffer.canvas(64, 32);
         target.fill(0);
         MinecraftGraphics graphics = new MinecraftGraphics(target);
         graphics.setColor(Color.WHITE);
@@ -309,13 +315,13 @@ class MinecraftGlyphVectorTest {
     void drawStringEqualsLayoutPaint() {
         String text = "Hello, World!";
 
-        PixelBuffer viaDrawString = PixelBuffer.create(160, 32);
+        PixelBuffer viaDrawString = PixelBuffer.canvas(160, 32);
         viaDrawString.fill(0);
         MinecraftGraphics g1 = new MinecraftGraphics(viaDrawString);
         g1.setColor(Color.WHITE);
         g1.drawString(text, 2, 20);
 
-        PixelBuffer viaLayoutPaint = PixelBuffer.create(160, 32);
+        PixelBuffer viaLayoutPaint = PixelBuffer.canvas(160, 32);
         viaLayoutPaint.fill(0);
         MinecraftGraphics g2 = new MinecraftGraphics(viaLayoutPaint);
         MinecraftFont.Vanilla.REGULAR.layout(text).paint(g2, 2, 20, Color.WHITE);
@@ -332,13 +338,13 @@ class MinecraftGlyphVectorTest {
     @Test
     @DisplayName("drawString at a half-mcPixel origin lands one output pixel from the whole-mcPixel origin")
     void drawStringAtHalfMcPixel() {
-        PixelBuffer half = PixelBuffer.create(64, 32);
+        PixelBuffer half = PixelBuffer.canvas(64, 32);
         half.fill(0);
         MinecraftGraphics g1 = new MinecraftGraphics(half);
         g1.setColor(Color.WHITE);
         g1.drawString("Hi", 1.5f, 10.5f);
 
-        PixelBuffer shifted = PixelBuffer.create(64, 32);
+        PixelBuffer shifted = PixelBuffer.canvas(64, 32);
         shifted.fill(0);
         MinecraftGraphics g2 = new MinecraftGraphics(shifted);
         g2.setColor(Color.WHITE);
@@ -353,13 +359,13 @@ class MinecraftGlyphVectorTest {
     void drawGlyphVectorAtHalfMcPixel() {
         MinecraftGlyphVector vector = MinecraftFont.Vanilla.REGULAR.layout("Hi");
 
-        PixelBuffer half = PixelBuffer.create(64, 32);
+        PixelBuffer half = PixelBuffer.canvas(64, 32);
         half.fill(0);
         MinecraftGraphics g1 = new MinecraftGraphics(half);
         g1.setColor(Color.WHITE);
         g1.drawGlyphVector((GlyphVector) vector, 1.5f, 10.5f);
 
-        PixelBuffer shifted = PixelBuffer.create(64, 32);
+        PixelBuffer shifted = PixelBuffer.canvas(64, 32);
         shifted.fill(0);
         MinecraftGraphics g2 = new MinecraftGraphics(shifted);
         g2.translate(1, 1);   // one output pixel each way
@@ -371,7 +377,7 @@ class MinecraftGlyphVectorTest {
     @Test
     @DisplayName("a mono glyph pixel takes its colour's alpha and is not laid at 25 or less, as the client's text shader discards below 0.1")
     void monoGlyphPixelTakesItsColoursAlpha() {
-        PixelBuffer bitmap = PixelBuffer.create(2, 1);
+        PixelBuffer bitmap = PixelBuffer.straight(2, 1);
         bitmap.fill(0xFFFFFFFF);
         MinecraftGlyph glyph = new MinecraftGlyph('x', bitmap, 4, 0, 0);
         Rectangle laid = new Rectangle(1, 1, 2, 1);
@@ -386,16 +392,62 @@ class MinecraftGlyphVectorTest {
         );
     }
 
+    @Test
+    @DisplayName("a mono glyph pixel is laid in the convention its buffer holds: onto straight colour it stays straight colour")
+    void monoGlyphPixelLaysInItsBuffersConvention() {
+        PixelBuffer bitmap = PixelBuffer.straight(2, 1);
+        bitmap.fill(0xFFFFFFFF);
+        MinecraftGlyph glyph = new MinecraftGlyph('x', bitmap, 4, 0, 0);
+        Rectangle laid = new Rectangle(1, 1, 2, 1);
+
+        // Over transparency the straight formula lays the colour as given. Over 0xF0100010 the colour weighs
+        // 128 * 255 = 32640 and the pixel 240 * 127 = 30480 of 63120: red (255 * 32640 + 16 * 30480) / 63120 = 140,
+        // blue 16 * 30480 / 63120 = 8, alpha 63120 / 255 = 248.
+        assertAll("a 2x1 opaque white glyph laid in 0x80FF0000 on a straight buffer",
+            () -> assertThat("over transparency", misplaced(blitOnto(PixelBuffer.straight(4, 3), 0, glyph, 0x80FF0000), laid, 0x80FF0000, 0), is(empty())),
+            () -> assertThat("over 0xF0100010", misplaced(blitOnto(PixelBuffer.straight(4, 3), FILL_STRAIGHT, glyph, 0x80FF0000), laid, 0xF88C0008, FILL_STRAIGHT), is(empty()))
+        );
+    }
+
+    @Test
+    @DisplayName("a colour glyph's see-through pixel is laid in the convention its buffer holds, as a mono glyph's is")
+    void colourGlyphPixelLaysInItsBuffersConvention() {
+        PixelBuffer bitmap = PixelBuffer.straight(2, 1);
+        bitmap.fill(0x80FF0000);
+        MinecraftGlyph glyph = MinecraftGlyph.color(0xE001, bitmap, 4f, 0, 0);
+        Rectangle laid = new Rectangle(1, 1, 2, 1);
+
+        // The tint reaches no pixel of a colour glyph, so each is laid in white and lays the strike's 0x80FF0000.
+        assertAll("a 2x1 colour glyph of 0x80FF0000",
+            () -> assertThat("on a canvas over " + String.format("%08X", FILL), misplaced(blitOver(glyph, 0xFFFFFFFF), laid, 0xF8870007, FILL), is(empty())),
+            () -> assertThat("on a straight buffer over transparency", misplaced(blitOnto(PixelBuffer.straight(4, 3), 0, glyph, 0xFFFFFFFF), laid, 0x80FF0000, 0), is(empty())),
+            () -> assertThat("on a straight buffer over 0xF0100010", misplaced(blitOnto(PixelBuffer.straight(4, 3), FILL_STRAIGHT, glyph, 0xFFFFFFFF), laid, 0xF88C0008, FILL_STRAIGHT), is(empty()))
+        );
+    }
+
     /**
-     * Blits a glyph at {@code (1, 1)} onto a 4x3 buffer holding {@link #FILL}.
+     * Blits a glyph at {@code (1, 1)} onto a 4x3 canvas holding {@link #FILL}.
      *
+     * @param glyph the glyph to blit
+     * @param argb the colour to blit it in
+     * @return the canvas the glyph was blitted onto
+     */
+    private static PixelBuffer blitOver(MinecraftGlyph glyph, int argb) {
+        return blitOnto(PixelBuffer.canvas(4, 3), FILL_STRAIGHT, glyph, argb);
+    }
+
+    /**
+     * Fills a buffer with a straight colour, laid in the convention the buffer holds, and blits a glyph onto it at
+     * {@code (1, 1)}.
+     *
+     * @param target the buffer to blit onto
+     * @param fill the straight colour to fill it with first
      * @param glyph the glyph to blit
      * @param argb the colour to blit it in
      * @return the buffer the glyph was blitted onto
      */
-    private static PixelBuffer blitOver(MinecraftGlyph glyph, int argb) {
-        PixelBuffer target = PixelBuffer.create(4, 3);
-        target.fill(FILL);
+    private static PixelBuffer blitOnto(PixelBuffer target, int fill, MinecraftGlyph glyph, int argb) {
+        target.fill(fill);
         new MinecraftGraphics(target).blitGlyph(glyph, 1, 1, argb);
         return target;
     }
@@ -413,15 +465,15 @@ class MinecraftGlyphVectorTest {
     }
 
     /**
-     * Draws {@code "Hi"} through {@link MinecraftGraphics#drawString(String, float, float)} onto a 64x32 buffer
+     * Draws {@code "Hi"} through {@link MinecraftGraphics#drawString(String, float, float)} onto a 64x32 canvas
      * holding {@link #FILL}.
      *
      * @param colour the colour to draw in
-     * @return the buffer the run was drawn onto
+     * @return the canvas the run was drawn onto
      */
     private static PixelBuffer drawnOver(Color colour) {
-        PixelBuffer target = PixelBuffer.create(64, 32);
-        target.fill(FILL);
+        PixelBuffer target = PixelBuffer.canvas(64, 32);
+        target.fill(FILL_STRAIGHT);
         MinecraftGraphics graphics = new MinecraftGraphics(target);
         graphics.setColor(colour);
         graphics.drawString("Hi", 1f, 10f);
@@ -429,9 +481,32 @@ class MinecraftGlyphVectorTest {
     }
 
     @Test
+    @DisplayName("a glyph laid on a transparent scratch canvas and scaled onto a canvas is scaled by its alpha once")
+    void aScratchCanvasScalesItsGlyphByAlphaOnce() {
+        PixelBuffer bitmap = PixelBuffer.straight(1, 1);
+        bitmap.fill(0xFFFFFFFF);
+        MinecraftGlyph glyph = new MinecraftGlyph('x', bitmap, 2, 0, 0);
+
+        PixelBuffer scratch = PixelBuffer.canvas(1, 1);
+        new MinecraftGraphics(scratch).blitGlyph(glyph, 0, 0, 0x80FF0000);
+        PixelBuffer target = PixelBuffer.canvas(4, 3);
+        target.fill(FILL_STRAIGHT);
+        target.blitScaled(scratch, 1, 1, 2, 2);
+
+        // 0x80FF0000 over transparency is 0xFF * 128 / 255 = 128 red at alpha 128, premultiplied; laid premultiplied
+        // over FILL it is 128 + round(15 * 127 / 255) = 135 red, round(15 * 127 / 255) = 7 blue and
+        // round(128 + 240 * 127 / 255) = 248 alpha, the 0xF8870007 laying the glyph onto FILL directly lays. The two
+        // agree exactly here because channels of 0xFF and 0 premultiply without rounding.
+        assertAll("0x80FF0000 laid on a 1x1 scratch canvas and scaled to 2x2 at (1, 1) over " + String.format("%08X", FILL),
+            () -> assertThat("the scratch", scratch.getPixel(0, 0), is(0x80800000)),
+            () -> assertThat("the canvas it is scaled onto", misplaced(target, new Rectangle(1, 1, 2, 2), 0xF8870007, FILL), is(empty()))
+        );
+    }
+
+    @Test
     @DisplayName("MinecraftGlyphVector#paint in a colour of alpha 25 paints nothing - one lay-down behind every entry point")
     void paintInADiscardedColourPaintsNothing() {
-        PixelBuffer target = PixelBuffer.create(64, 32);
+        PixelBuffer target = PixelBuffer.canvas(64, 32);
         target.fill(0);
         MinecraftGraphics graphics = new MinecraftGraphics(target);
         MinecraftFont.Vanilla.REGULAR.layout("Hi").paint(graphics, 1, 10, new Color(255, 255, 255, 25));
@@ -448,14 +523,14 @@ class MinecraftGlyphVectorTest {
         float headMcPx = font.metrics().stringAdvanceMcPixels(head);
         assertThat(headMcPx, is(9.5f));
 
-        PixelBuffer joined = PixelBuffer.create(48, 16);
+        PixelBuffer joined = PixelBuffer.canvas(48, 16);
         joined.fill(0);
         MinecraftGraphics g1 = new MinecraftGraphics(joined);
         g1.setFont(font);
         g1.setColor(Color.WHITE);
         g1.drawString(head + tail, 0f, 0f);
 
-        PixelBuffer split = PixelBuffer.create(48, 16);
+        PixelBuffer split = PixelBuffer.canvas(48, 16);
         split.fill(0);
         MinecraftGraphics g2 = new MinecraftGraphics(split);
         g2.setFont(font);
@@ -476,14 +551,14 @@ class MinecraftGlyphVectorTest {
         float headMcPx = font.metrics().stringAdvanceMcPixels(head);
         assertThat(headMcPx, is(8.75f));
 
-        PixelBuffer joined = PixelBuffer.create(48, 16);
+        PixelBuffer joined = PixelBuffer.canvas(48, 16);
         joined.fill(0);
         MinecraftGraphics g1 = new MinecraftGraphics(joined);
         g1.setFont(font);
         g1.setColor(Color.WHITE);
         g1.drawString(head + tail, 0f, 0f);
 
-        PixelBuffer viaDraw = PixelBuffer.create(48, 16);
+        PixelBuffer viaDraw = PixelBuffer.canvas(48, 16);
         viaDraw.fill(0);
         MinecraftGraphics g2 = new MinecraftGraphics(viaDraw);
         g2.setFont(font);
@@ -491,7 +566,7 @@ class MinecraftGlyphVectorTest {
         g2.drawString(head, 0f, 0f);
         g2.drawString(tail, headMcPx, 0f);
 
-        PixelBuffer viaVector = PixelBuffer.create(48, 16);
+        PixelBuffer viaVector = PixelBuffer.canvas(48, 16);
         viaVector.fill(0);
         MinecraftGraphics g3 = new MinecraftGraphics(viaVector);
         g3.drawGlyphVector(font.layout(head), 0f, 0f, Color.WHITE);
@@ -602,7 +677,7 @@ class MinecraftGlyphVectorTest {
         assertThat(vector.positionedGlyph(1).kind(), is(MinecraftGlyphVector.Kind.SPACE));   // fractional-advance space
         assertThat(vector.positionedGlyph(2).kind(), is(MinecraftGlyphVector.Kind.RASTER));  // flat colour glyph
 
-        PixelBuffer target = PixelBuffer.create(96, 48);
+        PixelBuffer target = PixelBuffer.canvas(96, 48);
         target.fill(0);
         MinecraftGraphics graphics = new MinecraftGraphics(target);
         vector.paint(graphics, 0, 16, Color.WHITE);   // one call renders mono + colour + space together
@@ -674,13 +749,13 @@ class MinecraftGlyphVectorTest {
     }
 
     /**
-     * A 10x6 buffer holding {@link #FILL}, for a bar to be laid over.
+     * A 10x6 canvas holding {@link #FILL}, for a bar to be laid over.
      *
-     * @return the buffer
+     * @return the canvas
      */
     private static PixelBuffer effectCanvas() {
-        PixelBuffer canvas = PixelBuffer.create(10, 6);
-        canvas.fill(FILL);
+        PixelBuffer canvas = PixelBuffer.canvas(10, 6);
+        canvas.fill(FILL_STRAIGHT);
         return canvas;
     }
 

@@ -25,14 +25,21 @@ import java.awt.font.GlyphVector;
  * pixels, the colour reaching none of them. A strikethrough or underline bar, given in mcPixels to
  * {@link #fillEffect(float, float, float, float)}, is laid by the same step at full coverage.
  * <p>
+ * Text is laid in the convention the buffer holds, each pixel as
+ * {@link PixelBuffer#fillRect(int, int, int, int, int, BlendMode)} lays a straight colour under
+ * {@link BlendMode#NORMAL}: onto premultiplied colour, or a buffer whose alpha carries no data, by
+ * {@code NORMAL}'s formula, which over transparency leaves premultiplied colour as the client's
+ * translucent blend leaves it in the framebuffer, and onto straight colour by
+ * {@link BlendMode#STRAIGHT}'s, which leaves straight colour. A canvas, made by
+ * {@link PixelBuffer#canvas(int, int)}, holds what the client's framebuffer holds.
+ * <p>
  * Rendering is always at the font's native rasterization (no glyph pixel replication). Callers
  * that need a larger glyph for GUI-density use cases (e.g. stack counts on a hi-res icon)
- * should rasterize into a native-size transparent scratch buffer and lay it down with
- * {@link PixelBuffer#blitScaled(PixelBuffer, int, int, int, int, BlendMode)} under
- * {@link BlendMode#PREMULTIPLIED} - this keeps glyph compositing in a single blend step while
- * letting the caller choose the upscale ratio independently. Glyphs drawn onto transparency hold
- * their colour already scaled by alpha, which {@link BlendMode#NORMAL} would scale a second time,
- * darkening every partly covered edge.
+ * should rasterize into a native-size transparent scratch canvas and lay it down with
+ * {@link PixelBuffer#blitScaled(PixelBuffer, int, int, int, int)} - the glyph is blended once onto the
+ * scratch and the scratch composited once, as premultiplied colour, so its alpha is applied once while
+ * the caller chooses the upscale ratio independently. Each of the two blends rounds, so a pixel laid
+ * this way can differ from a direct draw's by one in a channel.
  *
  * @see MinecraftFont
  * @see PixelGraphics
@@ -113,7 +120,9 @@ public class MinecraftGraphics extends PixelGraphics {
      * the translation and rounded half up once, as a glyph's origin plus pen is in
      * {@link #drawString(String, float, float)}, so the bar's width and height are the differences of its
      * rounded edges. The clip is honoured as it is for a glyph. The inherited
-     * {@link #fillRect(int, int, int, int)} stays in output pixels and overwrites what it covers.
+     * {@link #fillRect(int, int, int, int)} stays in output pixels and composites the current colour
+     * source-over in the convention the buffer holds, and lays a colour whose alpha is
+     * {@link #DISCARD_ALPHA} or less too, where the text shader discards one.
      *
      * @param xMcPx the left edge in mcPixels
      * @param yMcPx the top edge in mcPixels
@@ -154,8 +163,9 @@ public class MinecraftGraphics extends PixelGraphics {
      * Monochrome glyphs are tinted as the client's text shader tints them: each pixel takes
      * {@code tintArgb}'s red, green and blue, and its texel's alpha times {@code tintArgb}'s; a pixel
      * whose alpha comes to {@link #DISCARD_ALPHA} or less is not laid, and any other blends with
-     * {@link BlendMode#NORMAL}. Colour glyphs ({@link MinecraftGlyph#color()}) carry their own RGBA
-     * artwork and are blitted natively - {@code tintArgb} is ignored, its alpha included - so pack
+     * {@link BlendMode#NORMAL} in the convention the target holds. Colour glyphs
+     * ({@link MinecraftGlyph#color()}) carry their own RGBA artwork, read as straight colour, and are
+     * blitted natively the same way - {@code tintArgb} is ignored, its alpha included - so pack
      * {@code sbix} strikes keep their authored colours.
      *
      * @param glyph the glyph to blit
@@ -191,7 +201,7 @@ public class MinecraftGraphics extends PixelGraphics {
                 if (px < clipX0 || px >= clipX1) continue;
 
                 if (color)
-                    target.setPixel(px, py, ColorMath.blend(pixel, target.getPixel(px, py), BlendMode.NORMAL));
+                    target.fillRect(px, py, 1, 1, pixel, BlendMode.NORMAL);
                 else
                     layTextPixel(target, px, py, alpha, tintArgb);
             }
@@ -213,8 +223,9 @@ public class MinecraftGraphics extends PixelGraphics {
     /**
      * Lays one text pixel as the client's text shader and translucent blend lay it: the coverage times
      * the colour's alpha, rounded half up once, is the pixel's alpha; a pixel at {@link #DISCARD_ALPHA}
-     * or less is not laid, and any other is blended over the target with {@link BlendMode#NORMAL}. An
-     * opaque colour over a whole texel lays its colour as given.
+     * or less is not laid, and any other is laid over the target by
+     * {@link PixelBuffer#fillRect(int, int, int, int, int, BlendMode)} under {@link BlendMode#NORMAL}, in
+     * the convention the target holds. An opaque colour over a whole texel lays its colour as given.
      *
      * @param target the buffer to lay the pixel on
      * @param x the buffer X
@@ -226,7 +237,7 @@ public class MinecraftGraphics extends PixelGraphics {
         int alpha = (coverage * ColorMath.alpha(argb) + 127) / 255;
         if (alpha <= DISCARD_ALPHA) return;
         int source = ColorMath.pack(alpha, ColorMath.red(argb), ColorMath.green(argb), ColorMath.blue(argb));
-        target.setPixel(x, y, ColorMath.blend(source, target.getPixel(x, y), BlendMode.NORMAL));
+        target.fillRect(x, y, 1, 1, source, BlendMode.NORMAL);
     }
 
     // --- colour glyph vector rendering ---
