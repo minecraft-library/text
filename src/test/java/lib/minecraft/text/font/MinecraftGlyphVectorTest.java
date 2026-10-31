@@ -748,6 +748,28 @@ class MinecraftGlyphVectorTest {
         assertThat(misplaced(target, new Rectangle(2, 2, 1, 2), 0xF8870007, FILL), is(empty()));
     }
 
+    @Test
+    @DisplayName("fillEffect lays a bar in the convention its buffer holds: onto straight colour it stays straight colour")
+    void fillEffectLaysInItsBuffersConvention() {
+        PixelBuffer overTransparency = PixelBuffer.straight(10, 6);
+        MinecraftGraphics g1 = new MinecraftGraphics(overTransparency);
+        g1.setColor(new Color(0x80FF0000, true));
+        g1.fillEffect(1f, 1f, 3f, 1f);
+
+        PixelBuffer overFill = PixelBuffer.straight(10, 6);
+        overFill.fill(FILL_STRAIGHT);
+        MinecraftGraphics g2 = new MinecraftGraphics(overFill);
+        g2.setColor(new Color(0x80FF0000, true));
+        g2.fillEffect(1f, 1f, 3f, 1f);
+
+        // As a mono glyph pixel is laid onto a straight buffer: the colour as given over transparency, and the
+        // straight formula's 0xF88C0008 over 0xF0100010, where NORMAL's would lay 0x80800000 and 0xF8880008.
+        assertAll("a 3x1 mcPixel bar at (1, 1) in 0x80FF0000 on a straight buffer, the 6x2 output pixels from (2, 2)",
+            () -> assertThat("over transparency", misplaced(overTransparency, new Rectangle(2, 2, 6, 2), 0x80FF0000, 0), is(empty())),
+            () -> assertThat("over 0xF0100010", misplaced(overFill, new Rectangle(2, 2, 6, 2), 0xF88C0008, FILL_STRAIGHT), is(empty()))
+        );
+    }
+
     /**
      * A 10x6 canvas holding {@link #FILL}, for a bar to be laid over.
      *
