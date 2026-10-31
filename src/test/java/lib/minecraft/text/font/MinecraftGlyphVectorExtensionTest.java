@@ -277,7 +277,7 @@ class MinecraftGlyphVectorExtensionTest {
     private static @NotNull Rectangle2D drawnBounds(@NotNull MinecraftFont font, @NotNull String text, @NotNull Color colour) {
         int margin = 64;
         int width = (int) Math.ceil(Math.abs(font.layout(text).advanceX())) + 2 * margin;
-        PixelBuffer canvas = PixelBuffer.create(width, 2 * margin);
+        PixelBuffer canvas = PixelBuffer.canvas(width, 2 * margin);
         MinecraftGraphics graphics = new MinecraftGraphics(canvas);
         graphics.setFont(font);
         graphics.setColor(colour);
@@ -337,7 +337,7 @@ class MinecraftGlyphVectorExtensionTest {
     @Test
     @DisplayName("drawGlyphVector rejects a foreign GlyphVector: AWT would reduce it to glyph codes and drop the pack layout")
     void drawGlyphVectorRejectsForeign() throws Exception {
-        PixelBuffer target = PixelBuffer.create(16, 16);
+        PixelBuffer target = PixelBuffer.canvas(16, 16);
         MinecraftGraphics graphics = new MinecraftGraphics(target);
 
         FontRenderContext frc = new FontRenderContext(new AffineTransform(), true, true);
@@ -362,14 +362,14 @@ class MinecraftGlyphVectorExtensionTest {
         assertThat(font.metrics().stringWidth(text), is(Math.round((float) vector.advanceX())));
 
         // Surface 3 (draw): drawString and vector.paint are byte-identical, both consuming the one walk.
-        PixelBuffer viaDraw = PixelBuffer.create(96, 48);
+        PixelBuffer viaDraw = PixelBuffer.canvas(96, 48);
         viaDraw.fill(0);
         MinecraftGraphics g1 = new MinecraftGraphics(viaDraw);
         g1.setFont(font);
         g1.setColor(Color.WHITE);
         g1.drawString(text, 1, 16);
 
-        PixelBuffer viaPaint = PixelBuffer.create(96, 48);
+        PixelBuffer viaPaint = PixelBuffer.canvas(96, 48);
         viaPaint.fill(0);
         MinecraftGraphics g2 = new MinecraftGraphics(viaPaint);
         vector.paint(g2, 1, 16, Color.WHITE);

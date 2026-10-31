@@ -1,6 +1,7 @@
 package lib.minecraft.renderer.text.font;
 
 import dev.simplified.image.PixelBuffer;
+import dev.simplified.image.pixel.AlphaMode;
 import lib.minecraft.text.TextSegment;
 import lib.minecraft.text.font.ColorGlyphSidecar;
 import lib.minecraft.text.font.FontId;
@@ -251,7 +252,7 @@ class MinecraftFontTest {
             MinecraftGlyphVector vector = missing.layout(text);
             GlyphMetrics metrics = vector.getGlyphMetrics(0);
 
-            PixelBuffer canvas = PixelBuffer.create(12, 16);
+            PixelBuffer canvas = PixelBuffer.canvas(12, 16);
             MinecraftGraphics graphics = new MinecraftGraphics(canvas);
             graphics.setFont(missing);
             graphics.setColor(Color.WHITE);
@@ -261,6 +262,7 @@ class MinecraftFontTest {
             checks.add(() -> assertThat(label + "advance", glyph.signedAdvance(), is(12f)));
             checks.add(() -> assertThat(label + "bearing", List.of(glyph.bearingX(), glyph.bearingY()), is(List.of(0, -14))));
             checks.add(() -> assertThat(label + "texels", offTheBox(glyph.bitmap()), is(empty())));
+            checks.add(() -> assertThat(label + "texels in straight colour", glyph.bitmap().alphaMode(), is(AlphaMode.STRAIGHT)));
             checks.add(() -> assertThat(label + "visual bounds", vector.getVisualBounds(), is(BOX)));
             checks.add(() -> assertThat(label + "glyph metrics advance", metrics.getAdvance(), is(12f)));
             checks.add(() -> assertThat(label + "glyph metrics bounds", metrics.getBounds2D().getBounds(), is(BOX)));

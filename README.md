@@ -126,8 +126,9 @@ import lib.minecraft.text.font.MinecraftGraphics;
 
 LineSegment line = TextSegment.fromLegacy("&6Hello, &lworld!");
 
-// Output buffer is sized in native render pixels (mcPixels * MC_PIXEL_SCALE).
-PixelBuffer buffer = PixelBuffer.create(256, 32);
+// Output buffer is sized in native render pixels (mcPixels * MC_PIXEL_SCALE). It is a canvas, holding
+// premultiplied colour as the client's framebuffer does; text is laid in the convention its buffer holds.
+PixelBuffer buffer = PixelBuffer.canvas(256, 32);
 MinecraftGraphics gfx = new MinecraftGraphics(buffer);
 
 // drawString takes mcPixel coordinates; the baseline convention matches AWT. The pen is a float,

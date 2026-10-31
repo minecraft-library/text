@@ -126,7 +126,7 @@ class ColorFontConformanceTest {
         assertThat(vector.positionedGlyph(2).strikePpem(), is(16));
 
         // paint and confirm the downscaled glyph lands as native colour (untinted)
-        PixelBuffer target = PixelBuffer.create(32, 32);
+        PixelBuffer target = PixelBuffer.canvas(32, 32);
         target.fill(0);
         MinecraftGraphics graphics = new MinecraftGraphics(target);
         vector.paint(graphics, 0, 0, Color.MAGENTA);
