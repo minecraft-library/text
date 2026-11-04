@@ -35,7 +35,7 @@ dependencies {
     // class form and surfaced LambdaConversionException at consumer link time.
     api("com.github.simplified-dev:collections") { version { strictly("6842129") } }
     api("com.github.simplified-dev:utils") { version { strictly("7cc206f") } }
-    api("com.github.simplified-dev:image") { version { strictly("628db41") } }
+    api("com.github.simplified-dev:image") { version { strictly("867b842") } }
 
     // Gson - JsonObject / JsonElement used by TextSegment + friends
     api(libs.gson)
