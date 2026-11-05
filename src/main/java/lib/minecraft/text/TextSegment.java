@@ -64,6 +64,14 @@ import java.util.function.Function;
  * where the client's font opens one, which is where the client leads an underline or strikethrough one
  * mcPixel left of the first glyph. The client also cuts a line it reorders for right-to-left text at
  * each visual run, and no such reordering is modelled here.</p>
+ *
+ * <p>A component keeps a section sign ({@link ChatFormat#SECTION_SYMBOL}) and the character after it in
+ * its text as written, as the client's component does, and the client reads the two, wherever they fall in
+ * a text it draws, as a code that restyles the rest of that text. The runs {@link #toLines()} and
+ * {@link #fromLegacy(String, char)} answer are read the same way, so they hold no legacy code and neither
+ * character is drawn. A code ends the run before it, and the run after it joins that one again as any
+ * neighbour in its style does, so a gradient, which keeps two runs apart, restarts at each code in its
+ * text, even one that leaves the style as it was.</p>
  */
 @Getter
 @ToString
@@ -155,7 +163,9 @@ public final class TextSegment {
     }
 
     /**
-     * Returns the text this segment shows on its own, before its siblings and unresolved.
+     * Returns the text this segment holds on its own, before its siblings and unresolved, as written - a
+     * legacy code in it included, as the client's {@code Component#getString} keeps one. A run
+     * {@link #toLines()} or {@link #fromLegacy(String, char)} answers holds none.
      *
      * @return the text
      */
@@ -233,7 +243,8 @@ public final class TextSegment {
     }
 
     /**
-     * Returns the text this segment and its siblings show, unresolved and without style.
+     * Returns the text this segment and its siblings hold, unresolved and without their style fields, as
+     * written - a legacy code in it included, as the client's {@code Component#getString} keeps one.
      *
      * @return the plain text
      */
@@ -255,10 +266,19 @@ public final class TextSegment {
 
     /**
      * Flattens this segment and its siblings into lines of runs - each run plain text in the style it is
-     * shown in, inherited style resolved, and a new line begun at each {@code \n}. Neighbours in one style
-     * on a line are one run and empty text is none, as the client's font cuts a line, save where a
-     * gradient on either side, the edge of a sprite or a surrogate pair split between them keeps the two
-     * apart.
+     * shown in, inherited style resolved, the legacy codes in its text read, and a new line begun at each
+     * {@code \n}. Neighbours in one style on a line are one run and empty text is none, as the client's font
+     * cuts a line, save where a gradient on either side, the edge of a sprite or a surrogate pair split
+     * between them keeps the two apart.
+     *
+     * <p>The codes are read as the client's font reads them in a text it draws: a code restyles the rest of
+     * the text it sits in and no other component's, a reset returns to the style that text is shown in, a
+     * code's style carries past a {@code \n} in the same text, and a sign directly before a {@code \n} takes
+     * it as its code, so no line begins there. Where the client wraps a text before it draws it, as it wraps
+     * a book page, its line splitter reads the codes as it wraps, a reset as no style at all, and opens the
+     * text after each break in the style in force there. The lines answered here hold no code, so they
+     * cannot be wrapped as the client wraps a page, which it wraps from the page's component with the codes
+     * still in its text.</p>
      *
      * @return the lines, at least one
      */
@@ -436,7 +456,8 @@ public final class TextSegment {
     }
 
     /**
-     * Reads legacy text coded with {@code &} or {@link ChatFormat#SECTION_SYMBOL} into a line of runs.
+     * Reads legacy text coded with {@link ChatFormat#SECTION_SYMBOL}, or with {@code &} where a code character
+     * follows it, into a line of runs.
      *
      * @param legacyText the legacy text
      * @return the line
@@ -447,80 +468,32 @@ public final class TextSegment {
     }
 
     /**
-     * This function takes in a legacy text string and converts it into a line of {@link TextSegment} runs.
-     * <p>
-     * Legacy text strings use the {@link ChatFormat#SECTION_SYMBOL}. Many keyboards do not have this symbol however,
-     * which is probably why it was chosen. To get around this, it is common practice to substitute
-     * the symbol for another, then translate it later. Often '&' is used, but this can differ from person
-     * to person. In case the string does not have a {@link ChatFormat#SECTION_SYMBOL}, the method also checks for the
-     * {@code symbolSubstitute}.
-     * <p>
-     * A colour code starts a run in that colour with no format; a format code turns that format on and keeps
-     * the colour and the formats already on, as the client's {@code Style#applyLegacyFormat} applies one;
-     * {@code r} starts a white run with no format. A code is matched as written, so an
-     * upper-case letter or a character that is no code stays in the text along with the symbol before it.
-     * Each run's text takes the substitution {@link Builder#text(String)} applies. A run in the style of the
-     * run before it joins that run and a code no text follows starts none, as {@link #toLines()} answers a
-     * line's runs.
+     * Reads legacy text into a line of runs, from no style, as the client's font reads the legacy codes in a
+     * text it draws.
      *
-     * @param legacyText The text to make into an object
-     * @param symbolSubstitute The character substitute
-     * @return A LineSegment representing the legacy text
+     * <p>A section sign ({@link ChatFormat#SECTION_SYMBOL}) and the character after it are a code, and neither is
+     * drawn. The character, in its lower case, names a colour, which the code sets and turns every format off
+     * with; a format, which it turns on over the colour and the formats already on; or {@code r}, which returns
+     * to no style. Any other character is dropped with the sign before it, and a sign ending the text is
+     * dropped.</p>
+     *
+     * <p>{@code symbolSubstitute} is a stand-in for the section sign, which few keyboards have: it reads as the
+     * sign where a code character follows it as written - {@code 0} to {@code 9}, {@code a} to {@code f},
+     * {@code k} to {@code o} or {@code r} - and is text anywhere else, as the client keeps as text every
+     * character it reads no code in.</p>
+     *
+     * <p>Each run's text takes the substitution {@link Builder#text(String)} applies. A run in the style of the
+     * run before it joins that run and a code no text follows starts none, as {@link #toLines()} answers a
+     * line's runs.</p>
+     *
+     * @param legacyText the legacy text
+     * @param symbolSubstitute the character that stands for the section sign before a code
+     * @return the line
      */
     public static @NotNull LineSegment fromLegacy(@NotNull String legacyText, char symbolSubstitute) {
         List<TextSegment> runs = new ArrayList<>();
-        Builder current = builder();
-        StringBuilder buf = new StringBuilder();
-
-        for (int i = 0; i < legacyText.length(); i++) {
-            char ch = legacyText.charAt(i);
-
-            if ((ch != ChatFormat.SECTION_SYMBOL && ch != symbolSubstitute) || i + 1 >= legacyText.length()) {
-                buf.append(ch);
-                continue;
-            }
-
-            char peek = legacyText.charAt(++i);
-
-            // Try color first, then format
-            ChatColor color = ChatColor.of(peek);
-            ChatFormat format = color == null ? ChatFormat.ofCode(peek) : null;
-
-            if (color == null && format == null) {
-                buf.append(ch);
-                i--; // un-consume the peek
-                continue;
-            }
-
-            // Flush buffered text before applying the new code
-            if (!buf.isEmpty()) {
-                appendRun(runs, current.text(buf.toString()).build(), 0);
-                buf.setLength(0);
-            }
-
-            if (color != null) {
-                // Color codes reset all styles (vanilla behavior)
-                current = builder().color(color);
-            } else if (format == ChatFormat.RESET) {
-                current.color(ChatColor.Legacy.WHITE)
-                    .obfuscated(Optional.empty())
-                    .bold(Optional.empty())
-                    .italic(Optional.empty())
-                    .underlined(Optional.empty())
-                    .strikethrough(Optional.empty());
-            } else {
-                switch (format) {
-                    case OBFUSCATED -> current.obfuscated(true);
-                    case BOLD -> current.bold(true);
-                    case STRIKETHROUGH -> current.strikethrough(true);
-                    case UNDERLINE -> current.underlined(true);
-                    case ITALIC -> current.italic(true);
-                    default -> {}
-                }
-            }
-        }
-
-        appendRun(runs, current.text(buf.toString()).build(), 0);
+        builder().build().readCodes(legacyText, symbolSubstitute,
+            run -> appendRun(runs, run.mutate().text(run.getText()).build(), 0));
         return LineSegment.builder().segments(Concurrent.newList(runs)).build();
     }
 
@@ -565,24 +538,29 @@ public final class TextSegment {
 
     /**
      * Visits the runs this segment and its siblings show, in order, each in the style it inherits from
-     * {@code parent} where it sets none of its own, and runs {@code cut} on either side of a sprite's runs,
-     * since the client draws a sprite as a run of its own in the sprite's font.
+     * {@code parent} where it sets none of its own and with the legacy codes in its text read, and runs
+     * {@code cut} on either side of a sprite's runs, since the client draws a sprite as a run of its own in the
+     * sprite's font.
+     *
+     * @param parent the segment this one inherits its style from, or {@code null} for none
+     * @param runs the visitor of each run
+     * @param cut the action run on either side of a sprite's runs
      */
     private void flatten(@Nullable TextSegment parent, @NotNull Consumer<TextSegment> runs, @NotNull Runnable cut) {
         TextSegment styled = parent == null ? this : this.inherit(parent);
 
         switch (this.contents) {
-            case TextContents.Text text -> runs.accept(styled.run(text.text()));
+            case TextContents.Text text -> styled.readCodes(text.text(), ChatFormat.SECTION_SYMBOL, runs);
             case TextContents.Translatable translatable -> translatable.decompose().forEach(part -> part.flatten(styled, runs, cut));
             case TextContents.Sprite sprite -> {
                 cut.run();
                 sprite.fallback().ifPresentOrElse(
                     fallback -> fallback.flatten(styled, runs, cut),
-                    () -> runs.accept(styled.run(sprite.plainText()))
+                    () -> styled.readCodes(sprite.plainText(), ChatFormat.SECTION_SYMBOL, runs)
                 );
                 cut.run();
             }
-            default -> runs.accept(styled.run(this.contents.plainText()));
+            default -> styled.readCodes(this.contents.plainText(), ChatFormat.SECTION_SYMBOL, runs);
         }
 
         this.extra.forEach(sibling -> sibling.flatten(styled, runs, cut));
@@ -614,6 +592,86 @@ public final class TextSegment {
      */
     private @NotNull TextSegment run(@NotNull String text) {
         return this.mutate().contents(new TextContents.Text(text)).extra(List.of()).build();
+    }
+
+    /**
+     * Visits the runs a text shown in this segment's style is drawn as, reading each legacy code in it as
+     * the client's font reads one: a section sign and the character after it restyle the rest of the text,
+     * and neither is drawn, so each run holds the text between two codes in the style the codes before it
+     * leave. The style opens as this segment's own, which a reset returns to. A character that is no code is
+     * dropped with the sign before it, a sign ending the text ends it, and a run is handed on at every code,
+     * so a code that parts the two halves of a surrogate pair leaves them two runs.
+     *
+     * @param text the text
+     * @param symbolSubstitute a character read as the section sign where a code character follows it as
+     *     written - the section sign itself for text that has no substitute
+     * @param runs the visitor of each run, empty ones included
+     */
+    private void readCodes(@NotNull String text, char symbolSubstitute, @NotNull Consumer<TextSegment> runs) {
+        TextSegment style = this;
+        StringBuilder piece = new StringBuilder();
+
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            boolean sign = ch == ChatFormat.SECTION_SYMBOL
+                || ch == symbolSubstitute && i + 1 < text.length() && ChatFormat.isValid(text.charAt(i + 1));
+
+            if (!sign) {
+                piece.append(ch);
+                continue;
+            }
+
+            runs.accept(style.run(piece.toString()));
+            piece.setLength(0);
+
+            if (++i == text.length())
+                break;
+
+            style = style.applyLegacyCode(text.charAt(i), this);
+        }
+
+        runs.accept(style.run(piece.toString()));
+    }
+
+    /**
+     * Returns this style with one legacy code applied, the character read in its lower case as the client
+     * reads a code: a colour code sets the colour and turns all five formats off, as the client's
+     * {@code Style#applyLegacyFormat} sets them false, a format code turns its one format on, and a reset
+     * answers {@code reset}. Any other character leaves the style as it is. Everything else the style holds -
+     * the shadow colour, the click and hover events, the insertion, the font and the gradient - is kept.
+     *
+     * @param code the character after the section sign
+     * @param reset the style a reset returns to
+     * @return the style the code leaves
+     */
+    private @NotNull TextSegment applyLegacyCode(char code, @NotNull TextSegment reset) {
+        char lower = Character.toLowerCase(code);
+        ChatColor color = ChatColor.of(lower);
+
+        if (color != null) {
+            return this.mutate()
+                .color(color)
+                .bold(false)
+                .italic(false)
+                .underlined(false)
+                .strikethrough(false)
+                .obfuscated(false)
+                .build();
+        }
+
+        ChatFormat format = ChatFormat.ofCode(lower);
+
+        if (format == null)
+            return this;
+
+        return switch (format) {
+            case OBFUSCATED -> this.mutate().obfuscated(true).build();
+            case BOLD -> this.mutate().bold(true).build();
+            case STRIKETHROUGH -> this.mutate().strikethrough(true).build();
+            case UNDERLINE -> this.mutate().underlined(true).build();
+            case ITALIC -> this.mutate().italic(true).build();
+            case RESET -> reset;
+        };
     }
 
     /**

@@ -5,6 +5,7 @@ import lib.minecraft.text.ChatColor;
 import lib.minecraft.text.GradientSpec;
 import lib.minecraft.text.LineSegment;
 import lib.minecraft.text.TextSegment;
+import lib.minecraft.text.font.FontId;
 import lib.minecraft.text.font.MinecraftFont;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
+import java.util.function.Predicate;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
@@ -29,7 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertAll;
  * neighbouring characters and opens each at position {@code 0}. Neighbours in one style join into one
  * run, a neighbour differing in any style field the client compares stays a run of its own, empty text
  * cuts nothing, a gradient, the edge of a sprite and a split surrogate pair keep two runs apart, and a
- * legacy format code adds to the style already on.
+ * legacy format code adds to the style already on. Each section sign and the character after it in a text
+ * is read as the client's font reads a legacy code, and neither is left in a run's text.
  */
 class TextSegmentTest {
 
@@ -75,7 +78,9 @@ class TextSegmentTest {
             () -> assertThat("and turns its format on", bold.getLast().isBold(), is(true)),
             () -> assertThat("keeps the formats already on", List.of(both.getLast().isBold(), both.getLast().isUnderlined()), contains(true, true)),
             () -> assertThat("a colour code turns every format off", TextSegment.fromLegacy("&7&lA&7B").getSegments().getLast().isBold(), is(false)),
-            () -> assertThat("toLegacy's own text reads back", TextSegment.fromLegacy(written.toLegacy()).getSegments(), contains(written.toLines().getFirst().getSegments().toArray(TextSegment[]::new)))
+            () -> assertThat("toLegacy's own text reads back to what its runs draw",
+                drawn(TextSegment.fromLegacy(written.toLegacy()).getSegments()),
+                is(drawn(written.toLines().getFirst().getSegments())))
         );
     }
 
@@ -232,6 +237,289 @@ class TextSegmentTest {
         );
     }
 
+    @Test
+    @DisplayName("a section sign and the character after it restyle the rest of their text and are not drawn")
+    void aCodeRestylesTheRestOfItsText() {
+        List<TextSegment> split = runs("{\"text\": \"a§lb\"}");
+        List<TextSegment> whole = runs("\"§lBold\"");
+        List<TextSegment> siblings = runs("[\"\", {\"text\": \"§lA\"}, {\"text\": \"B\"}]");
+        List<LineSegment> broken = TextSegment.literal("§la\nb").toLines();
+        List<LineSegment> taken = TextSegment.literal("a§\nb").toLines();
+        TextSegment component = TextSegment.fromJson("{\"text\": \"a§lb\"}");
+
+        assertAll(
+            () -> assertThat("the text either side of a code", texts(split), contains("a", "b")),
+            () -> assertThat("only the text after it restyled",
+                List.of(split.getFirst().isBold(), split.getLast().isBold()),
+                contains(false, true)),
+            () -> assertThat("a code opening the text", texts(whole), contains("Bold")),
+            () -> assertThat("restyles all of it", whole.getFirst().isBold(), is(true)),
+            () -> assertThat("a code in one component", texts(siblings), contains("A", "B")),
+            () -> assertThat("restyles no other component's text",
+                List.of(siblings.getFirst().isBold(), siblings.getLast().isBold()),
+                contains(true, false)),
+            () -> assertThat("a code before a line break in its text",
+                broken.stream().map(line -> texts(line.getSegments())).toList(),
+                contains(List.of("a"), List.of("b"))),
+            () -> assertThat("restyles the text past the break",
+                broken.stream().map(line -> line.getSegments().getFirst().isBold()).toList(),
+                contains(true, true)),
+            () -> assertThat("a sign directly before a line break takes it as its code", taken, hasSize(1)),
+            () -> assertThat("so no line begins there", texts(taken.getFirst().getSegments()), contains("ab")),
+            () -> assertThat("a component keeps its codes as written", component.getText(), is("a§lb")),
+            () -> assertThat("and writes them back", component.toJson(), is(JsonParser.parseString("\"a§lb\"")))
+        );
+    }
+
+    @Test
+    @DisplayName("a code letter is read in its lower case, so a capital letter and the Kelvin sign are codes")
+    void aCodeLetterIsReadInItsLowerCase() {
+        List<TextSegment> bold = runs("\"§Lx\"");
+        List<TextSegment> red = runs("\"§Cx\"");
+        List<TextSegment> kelvin = runs("\"§\u212Ax\"");
+        List<TextSegment> capitalK = runs("\"§Kx\"");
+        List<TextSegment> reset = runs("\"§l§Rx\"");
+        List<TextSegment> legacy = TextSegment.fromLegacy("§Lx", '§').getSegments();
+
+        assertAll(
+            () -> assertThat("a capital format code", texts(bold), contains("x")),
+            () -> assertThat("turns its format on", bold.getFirst().isBold(), is(true)),
+            () -> assertThat("a capital colour code", texts(red), contains("x")),
+            () -> assertThat("sets its colour", red.getFirst().getColor(), is(Optional.of(ChatColor.Legacy.RED))),
+            () -> assertThat("the Kelvin sign", texts(kelvin), contains("x")),
+            () -> assertThat("is the obfuscated code", kelvin.getFirst().isObfuscated(), is(true)),
+            () -> assertThat("a capital K", texts(capitalK), contains("x")),
+            () -> assertThat("is the obfuscated code too", capitalK.getFirst().isObfuscated(), is(true)),
+            () -> assertThat("a capital reset", texts(reset), contains("x")),
+            () -> assertThat("returns to the text's own style", reset.getFirst().isBold(), is(false)),
+            () -> assertThat("a capital in legacy text", texts(legacy), contains("x")),
+            () -> assertThat("is its code too", legacy.getFirst().isBold(), is(true))
+        );
+    }
+
+    @Test
+    @DisplayName("a colour code sets its colour and turns all five formats off, the component's own included, "
+        + "and keeps the rest of its style")
+    void aColourCodeTurnsEveryFormatOff() {
+        Optional<Boolean> off = Optional.of(false);
+        TextSegment last = runs("\"§k§l§m§n§ox§cy\"").getLast();
+        TextSegment own = runs("{\"text\": \"§cx\", \"bold\": true}").getLast();
+        TextSegment styled = TextSegment.fromJson("{\"text\": \"§cx\", \"shadow_color\": -16777216, "
+            + "\"insertion\": \"i\", \"font\": \"minecraft:alt\", "
+            + "\"click_event\": {\"action\": \"run_command\", \"command\": \"/a\"}}");
+        TextSegment kept = styled.toLines().getFirst().getSegments().getLast();
+        List<TextSegment> graded = TextSegment.builder().text("§cx").gradient(GRADIENT).build()
+            .toLines().getFirst().getSegments();
+        List<TextSegment> cut = runs("[\"\", {\"text\": \"§c§nA\"}, "
+            + "{\"text\": \"B\", \"color\": \"red\", \"underlined\": true}]");
+
+        assertAll(
+            () -> assertThat("the text after a colour code", last.getText(), is("y")),
+            () -> assertThat("in its colour", last.getColor(), is(Optional.of(ChatColor.Legacy.RED))),
+            () -> assertThat("with each format set false, not left unset",
+                List.of(last.getBold(), last.getItalic(), last.getUnderlined(), last.getStrikethrough(),
+                    last.getObfuscated()),
+                contains(off, off, off, off, off)),
+            () -> assertThat("a colour code over the component's own format",
+                own.getColor(),
+                is(Optional.of(ChatColor.Legacy.RED))),
+            () -> assertThat("turns it off too", own.isBold(), is(false)),
+            () -> assertThat("the rest of the style", kept.getText(), is("x")),
+            () -> assertThat("the shadow colour kept",
+                kept.getShadowColor().map(ChatColor::rgb),
+                is(Optional.of(-16777216))),
+            () -> assertThat("the insertion kept", kept.getInsertion(), is(Optional.of("i"))),
+            () -> assertThat("the font kept", kept.getFont(), is(Optional.of(FontId.parse("minecraft:alt")))),
+            () -> assertThat("the click event kept", kept.getClickEvent(), is(styled.getClickEvent())),
+            () -> assertThat("a gradient", texts(graded), contains("x")),
+            () -> assertThat("kept", graded.getFirst().getGradient(), is(Optional.of(GRADIENT))),
+            () -> assertThat("a flag a code sets false is not one left unset", texts(cut), contains("A", "B"))
+        );
+    }
+
+    @Test
+    @DisplayName("a format code turns its one format on and keeps the colour and the formats already on")
+    void aFormatCodeTurnsItsOneFormatOn() {
+        Map<Character, Predicate<TextSegment>> formats = new LinkedHashMap<>();
+        formats.put('k', TextSegment::isObfuscated);
+        formats.put('l', TextSegment::isBold);
+        formats.put('m', TextSegment::isStrikethrough);
+        formats.put('n', TextSegment::isUnderlined);
+        formats.put('o', TextSegment::isItalic);
+        TextSegment both = runs("\"§l§ox\"").getFirst();
+
+        assertAll(
+            () -> assertAll(formats.entrySet().stream().map(format -> (Executable) () -> {
+                TextSegment run = runs("\"§c§" + format.getKey() + "x\"").getFirst();
+
+                assertAll(
+                    () -> assertThat(format.getKey() + " after a colour", run.getText(), is("x")),
+                    () -> assertThat(format.getKey() + " keeps it",
+                        run.getColor(),
+                        is(Optional.of(ChatColor.Legacy.RED))),
+                    () -> assertThat(format.getKey() + " turns its format on", format.getValue().test(run), is(true))
+                );
+            })),
+            () -> assertThat("a second format keeps the first",
+                List.of(both.isBold(), both.isItalic()),
+                contains(true, true))
+        );
+    }
+
+    @Test
+    @DisplayName("a reset returns to the style its text is shown in, as the client's font draws it, and to no style "
+        + "in legacy text")
+    void aResetReturnsToTheStyleItsTextIsShownIn() {
+        List<TextSegment> own = runs("{\"text\": \"§c§oa§rb\", \"bold\": true, \"color\": \"gold\"}");
+        TextSegment inherited = runs("{\"text\": \"\", \"bold\": true, \"extra\": [{\"text\": \"§oa§rb\"}]}").getLast();
+        TextSegment legacy = TextSegment.fromLegacy("&cA&rB").getSegments().getLast();
+
+        assertAll(
+            () -> assertThat("the text either side of a reset", texts(own), contains("a", "b")),
+            () -> assertThat("before it, the codes' colour",
+                own.getFirst().getColor(),
+                is(Optional.of(ChatColor.Legacy.RED))),
+            () -> assertThat("and the codes' formats",
+                List.of(own.getFirst().isItalic(), own.getFirst().isBold()),
+                contains(true, false)),
+            () -> assertThat("after it, the component's own style",
+                own.getLast(),
+                is(runs("{\"text\": \"b\", \"bold\": true, \"color\": \"gold\"}").getFirst())),
+            () -> assertThat("a reset in an inherited style", inherited.getText(), is("b")),
+            () -> assertThat("returns to that style",
+                List.of(inherited.isBold(), inherited.isItalic()),
+                contains(true, false)),
+            () -> assertThat("a reset in legacy text", legacy.getText(), is("B")),
+            () -> assertThat("returns to no colour, not white", legacy.getColor(), is(Optional.empty())),
+            () -> assertThat("toLegacy writes the style a reset returns to",
+                TextSegment.fromJson("{\"text\": \"a§rb\", \"bold\": true}").toLegacy(),
+                is("§lab"))
+        );
+    }
+
+    @Test
+    @DisplayName("a sign and a character that is no code are dropped and leave the style as it was")
+    void anUnknownCodeIsDropped() {
+        List<TextSegment> red = runs("\"§cx§zy\"");
+        List<TextSegment> twice = runs("\"a§§lb\"");
+        List<TextSegment> graded = TextSegment.builder().text("ab§zcd").gradient(GRADIENT).build()
+            .toLines().getFirst().getSegments();
+
+        assertAll(
+            () -> assertThat("a letter that is no code", texts(runs("\"a§zb\"")), contains("ab")),
+            () -> assertThat("in a style", texts(red), contains("xy")),
+            () -> assertThat("leaves that style", red.getFirst().getColor(), is(Optional.of(ChatColor.Legacy.RED))),
+            () -> assertThat("a sign after a sign, which is no code", texts(twice), contains("alb")),
+            () -> assertThat("so the letter after it is text", twice.getFirst().isBold(), is(false)),
+            () -> assertThat("a space", texts(runs("\"a§ b\"")), contains("ab")),
+            () -> assertThat("the high half of a surrogate pair, the low half left as text",
+                texts(runs("\"a§\\uD83D\\uDE00b\"")),
+                contains("a\uDE00b")),
+            () -> assertThat("a dropped code between the two halves leaves them two runs",
+                texts(runs("\"\\uD83D§z\\uDE00\"")),
+                contains("\uD83D", "\uDE00")),
+            () -> assertThat("a gradient restarts at a code that changes nothing", texts(graded), contains("ab", "cd")),
+            () -> assertThat("each piece spreading it over itself",
+                graded.stream().map(TextSegment::getGradient).toList(),
+                contains(Optional.of(GRADIENT), Optional.of(GRADIENT))),
+            () -> assertThat("in legacy text", texts(TextSegment.fromLegacy("a§zb", '§').getSegments()), contains("ab"))
+        );
+    }
+
+    @Test
+    @DisplayName("a sign ending its text is dropped, and the next component opens on its own style")
+    void aSignEndingItsTextIsDropped() {
+        List<TextSegment> before = runs("[\"\", {\"text\": \"a§\"}, {\"text\": \"lb\"}]");
+
+        assertAll(
+            () -> assertThat("in a string", texts(runs("\"ab§\"")), contains("ab")),
+            () -> assertThat("before the next component", texts(before), contains("alb")),
+            () -> assertThat("which opens on its own style", before.getFirst().isBold(), is(false)),
+            () -> assertThat("in legacy text", texts(TextSegment.fromLegacy("x§", '§').getSegments()), contains("x"))
+        );
+    }
+
+    @Test
+    @DisplayName("the runs toLines and fromLegacy answer read the codes of each text they come from - a string, "
+        + "a component's text, a sibling, a translation's own text, a sprite's fallback, a player sprite's "
+        + "name, a keybind's name and legacy text")
+    void eachSourceOfARunsTextReadsItsCodes() {
+        Map<String, List<TextSegment>> bold = new LinkedHashMap<>();
+        bold.put("a string", runs("\"§lx\""));
+        bold.put("a component's text", runs("{\"text\": \"§lx\"}"));
+        bold.put("a sibling", runs("{\"text\": \"\", \"extra\": [\"§lx\"]}"));
+        bold.put("a literal", TextSegment.literal("§lx").toLines().getFirst().getSegments());
+        bold.put("a sprite's fallback",
+            runs("[\"\", {\"type\": \"object\", \"sprite\": \"item/apple\", \"fallback\": \"§lx\"}]"));
+        bold.put("legacy text", TextSegment.fromLegacy("§lx", '&').getSegments());
+        List<TextSegment> translated = runs("{\"translate\": \"k\", \"fallback\": \"§l%s §oy\", \"with\": [\"x\"]}");
+        List<TextSegment> keybind = runs("{\"keybind\": \"§lkey.jump\"}");
+        List<TextSegment> head = runs("[\"\", {\"type\": \"object\", \"player\": \"§lX\"}]");
+
+        assertAll(
+            () -> assertAll(bold.entrySet().stream().map(source -> (Executable) () -> assertAll(
+                () -> assertThat(source.getKey(), texts(source.getValue()), contains("x")),
+                () -> assertThat(source.getKey() + ", restyled", source.getValue().getFirst().isBold(), is(true))
+            ))),
+            () -> assertThat("a translation's own text", texts(translated), contains("x ", "y")),
+            () -> assertThat("a code restyling only its own piece of it",
+                List.of(translated.getFirst().isBold(), translated.getLast().isItalic()),
+                contains(false, true)),
+            () -> assertThat("a player sprite's name, in the stand-in drawn for it",
+                texts(head),
+                contains("[", "X head]")),
+            () -> assertThat("restyling the stand-in from the name on",
+                List.of(head.getFirst().isBold(), head.getLast().isBold()),
+                contains(false, true)),
+            () -> assertThat("a keybind's name", texts(keybind), contains("key.jump")),
+            () -> assertThat("read as any text", keybind.getFirst().isBold(), is(true))
+        );
+    }
+
+    @Test
+    @DisplayName("a substitute stands for the sign only before a code character written as the code is, and is "
+        + "text anywhere else")
+    void aSubstituteStandsForTheSignOnlyBeforeACode() {
+        List<TextSegment> prose = TextSegment.fromLegacy("Q&A, R&D &lbold&").getSegments();
+        List<TextSegment> capital = TextSegment.fromLegacy("&Lx").getSegments();
+        List<TextSegment> sign = TextSegment.fromLegacy("§Lx").getSegments();
+
+        assertAll(
+            () -> assertThat("text before a letter that is no code and at the end",
+                texts(prose),
+                contains("Q&A, R&D ", "bold&")),
+            () -> assertThat("a sign before a code",
+                List.of(prose.getFirst().isBold(), prose.getLast().isBold()),
+                contains(false, true)),
+            () -> assertThat("text before a capital", texts(capital), contains("&Lx")),
+            () -> assertThat("which turns nothing on", capital.getFirst().isBold(), is(false)),
+            () -> assertThat("text before a character that is no code",
+                texts(TextSegment.fromLegacy("&zx").getSegments()),
+                contains("&zx")),
+            () -> assertThat("the section sign itself, read in its lower case", texts(sign), contains("x")),
+            () -> assertThat("so its capital is a code", sign.getFirst().isBold(), is(true))
+        );
+    }
+
+    @Test
+    @DisplayName("each piece of legacy text between two codes takes the apostrophe substitution a builder's text "
+        + "applies")
+    void eachLegacyPieceTakesTheApostropheSubstitution() {
+        List<TextSegment> pieces = TextSegment.fromLegacy("it's &lBob's").getSegments();
+
+        assertAll(
+            () -> assertThat("an apostrophe on either side of a code",
+                texts(pieces),
+                contains("it\u2019s ", "Bob\u2019s")),
+            () -> assertThat("in the style each piece is read in",
+                List.of(pieces.getFirst().isBold(), pieces.getLast().isBold()),
+                contains(false, true)),
+            () -> assertThat("an escaped apostrophe",
+                texts(TextSegment.fromLegacy("\\'x\\'").getSegments()),
+                contains("'x'"))
+        );
+    }
+
     /**
      * Reads a JSON text component holding one line and answers that line's runs.
      *
@@ -274,6 +562,27 @@ class TextSegmentTest {
      */
     private static List<String> texts(List<TextSegment> runs) {
         return runs.stream().map(TextSegment::getText).toList();
+    }
+
+    /**
+     * Answers what each run draws - its text, its colour's value and whether each of the five formats is
+     * on.
+     *
+     * @param runs the runs
+     * @return what each draws, in order
+     */
+    private static List<List<Object>> drawn(List<TextSegment> runs) {
+        return runs.stream()
+            .map(run -> List.<Object>of(
+                run.getText(),
+                run.getColor().map(color -> color.rgb() & 0xFFFFFF),
+                run.isBold(),
+                run.isItalic(),
+                run.isUnderlined(),
+                run.isStrikethrough(),
+                run.isObfuscated()
+            ))
+            .toList();
     }
 
 }
