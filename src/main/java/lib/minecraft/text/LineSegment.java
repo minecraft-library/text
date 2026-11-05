@@ -59,20 +59,17 @@ public final class LineSegment {
     }
 
     /**
-     * This function takes in a legacy text string and converts it into a collection of {@link LineSegment}.
-     * <p>
-     * Legacy text strings use the {@link ChatFormat#SECTION_SYMBOL}. Many keyboards do not have this symbol however,
-     * which is probably why it was chosen. To get around this, it is common practice to substitute
-     * the symbol for another, then translate it later. Often '&' is used, but this can differ from person
-     * to person. In case the string does not have a {@link ChatFormat#SECTION_SYMBOL}, the method also checks for the
-     * {@code symbolSubstitute}.
-     * <p>
-     * Each line is read as {@link TextSegment#fromLegacy(String, char)} reads one, so neighbours in one style
-     * are one run, and an empty line or a line of codes alone is a line of no runs.
+     * Reads legacy text into lines of runs, split at each line break in it - {@code \r\n}, {@code \n}, or a
+     * backslash written before an {@code n} - each line read as {@link TextSegment#fromLegacy(String, char)}
+     * reads one, so a code's style ends at its line and a section sign ending a line is dropped.
      *
-     * @param legacyText The text to make into an object
-     * @param symbolSubstitute The character substitute
-     * @return A collection of LineSegments representing the legacy text
+     * <p>{@code symbolSubstitute} stands for the section sign ({@link ChatFormat#SECTION_SYMBOL}) only before a
+     * code character written as the code is, and is text anywhere else. Neighbours in one style are one run,
+     * and an empty line or a line of codes alone is a line of no runs.</p>
+     *
+     * @param legacyText the legacy text
+     * @param symbolSubstitute the character that stands for the section sign before a code
+     * @return the lines, one more than the line breaks in the text
      */
     public static @NotNull ConcurrentList<LineSegment> fromLegacy(@NotNull String legacyText, char symbolSubstitute) {
         return StreamUtil.ofArrays(legacyText.split("(\r?\n|\\\\n)", -1))
