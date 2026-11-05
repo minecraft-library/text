@@ -245,8 +245,9 @@ public sealed interface MinecraftFont permits MinecraftFont.Vanilla, MinecraftFo
      * {@link #obfuscate(int, RandomGenerator)}, in order, drawing from one stream.
      * <p>
      * The codepoint count and the run's non-bold advance are kept; the {@code char} length is not,
-     * since a pick may be a supplementary codepoint. Obfuscate a line after it is split, never before:
-     * a pick may be a codepoint a line splitter reads as a break, such as U+2028.
+     * since a pick may be a supplementary codepoint. Obfuscate a line after it is wrapped, never before,
+     * as the client wraps the text it was given and scrambles it as it draws: a pick may be U+0020, where
+     * a wrap may end a line, and a bold pick's advance may differ from the advance it replaces.
      *
      * @param text the text being obfuscated
      * @param random the source of the draws, at most one per codepoint
