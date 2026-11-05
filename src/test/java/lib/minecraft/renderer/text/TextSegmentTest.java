@@ -8,6 +8,7 @@ import lib.minecraft.text.TextSegment;
 import lib.minecraft.text.font.FontId;
 import lib.minecraft.text.font.MinecraftFont;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
@@ -23,6 +24,7 @@ import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertAll;
 
 /**
@@ -32,7 +34,9 @@ import static org.junit.jupiter.api.Assertions.assertAll;
  * run, a neighbour differing in any style field the client compares stays a run of its own, empty text
  * cuts nothing, a gradient, the edge of a sprite and a split surrogate pair keep two runs apart, and a
  * legacy format code adds to the style already on. Each section sign and the character after it in a text
- * is read as the client's font reads a legacy code, and neither is left in a run's text.
+ * is read as the client's font reads a legacy code, and neither is left in a run's text. It also covers
+ * {@link TextSegment#inherit(TextSegment)}, which merges a style under a segment as the client merges one
+ * under a component, and, in {@link Wrap}, the lines {@link TextSegment#wrap(int)} answers.
  */
 class TextSegmentTest {
 
@@ -518,6 +522,472 @@ class TextSegmentTest {
                 texts(TextSegment.fromLegacy("\\'x\\'").getSegments()),
                 contains("'x'"))
         );
+    }
+
+    @Test
+    @DisplayName("inherit takes each style field a segment does not set from another's and keeps its own text and "
+        + "siblings, as the client merges a style under a component")
+    void inheritMergesAStyleUnderASegment() {
+        TextSegment style = TextSegment.fromJson("{\"text\": \"x\", \"color\": \"black\", \"bold\": true, "
+            + "\"extra\": [\"y\"]}");
+        TextSegment merged = TextSegment.fromJson("{\"text\": \"a\", \"color\": \"red\", \"extra\": [\"b\"]}")
+            .inherit(style);
+        List<TextSegment> drawn = merged.toLines().getFirst().getSegments();
+        TextSegment events = TextSegment.fromJson("{\"text\": \"\", \"insertion\": \"i\", "
+            + "\"click_event\": {\"action\": \"run_command\", \"command\": \"/a\"}, "
+            + "\"hover_event\": {\"action\": \"show_text\", \"value\": \"h\"}}")
+            .mutate()
+            .gradient(GRADIENT)
+            .build();
+        TextSegment taken = TextSegment.literal("a").inherit(events);
+
+        assertAll(
+            () -> assertThat("a field it sets", merged.getColor(), is(Optional.of(ChatColor.Legacy.RED))),
+            () -> assertThat("a field it does not set", merged.getBold(), is(Optional.of(true))),
+            () -> assertThat("its own text", merged.getText(), is("a")),
+            () -> assertThat("and its own siblings", merged.toPlainText(), is("ab")),
+            () -> assertThat("which take the merged style", texts(drawn), contains("ab")),
+            () -> assertThat("bold", drawn.getFirst().isBold(), is(true)),
+            () -> assertThat("a gradient", taken.getGradient(), is(Optional.of(GRADIENT))),
+            () -> assertThat("a click event", taken.getClickEvent().isPresent(), is(true)),
+            () -> assertThat("the one the style sets", taken.getClickEvent(), is(events.getClickEvent())),
+            () -> assertThat("a hover event", taken.getHoverEvent().isPresent(), is(true)),
+            () -> assertThat("the one the style sets", taken.getHoverEvent(), is(events.getHoverEvent())),
+            () -> assertThat("an insertion", taken.getInsertion(), is(Optional.of("i")))
+        );
+    }
+
+    /**
+     * The lines {@link TextSegment#wrap(int)} answers - the client's {@code Font#split}, which wraps a text
+     * as written, reading its legacy codes as it measures, and then reads each line's codes for drawing.
+     * Each case expects the lines the 26.1 client's own line splitter answers for its text at this library's
+     * advances - a space 4 mcPixels, a regular {@code a} 6 and a bold one 7 - save a sprite, which the client
+     * measures as one U+FFFC in the sprite's font and this library as the text it draws in the sprite's place.
+     */
+    @Nested
+    @DisplayName("wrap")
+    class Wrap {
+
+        /**
+         * The width the client wraps a book page at, in mcPixels.
+         */
+        private static final int PAGE_WIDTH = 114;
+
+        /**
+         * The style the client's book merges under each page - black, with a shadow colour that draws none.
+         */
+        private static final TextSegment PAGE_STYLE = TextSegment.fromJson(
+            "{\"text\": \"\", \"color\": \"#000000\", \"shadow_color\": 0}"
+        );
+
+        @Test
+        @DisplayName("a line too wide ends at the last space walked, the overflowing one included, which is not drawn, "
+            + "and a space before that one stays at the end of its line")
+        void aLineEndsAtTheLastSpace() {
+            assertAll(
+                () -> assertThat("the last of two spaces",
+                    wrapped(TextSegment.literal("aa bb ccc"), 36),
+                    contains(List.of("aa bb"), List.of("ccc"))),
+                () -> assertThat("a space that overflows the line itself",
+                    wrapped(TextSegment.literal("a".repeat(19) + "  b"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(19)), List.of(" b"))),
+                () -> assertThat("a space that overflows the line after an earlier one",
+                    wrapped(TextSegment.literal("aa " + "a".repeat(16) + " b"), PAGE_WIDTH),
+                    contains(List.of("aa " + "a".repeat(16)), List.of("b"))),
+                () -> assertThat("a space before the last one",
+                    wrapped(TextSegment.literal("a".repeat(17) + "  " + "a".repeat(5)), PAGE_WIDTH),
+                    contains(List.of("a".repeat(17) + " "), List.of("a".repeat(5))))
+            );
+        }
+
+        @Test
+        @DisplayName("a word wider than the line breaks inside itself, the codepoint that overflows opening the "
+            + "next line")
+        void aWordWiderThanTheLineBreaksInsideIt() {
+            assertThat(wrapped(TextSegment.literal("a".repeat(20)), PAGE_WIDTH),
+                contains(List.of("a".repeat(19)), List.of("a")));
+        }
+
+        @Test
+        @DisplayName("a line exactly as wide as the width is kept")
+        void aLineAsWideAsTheWidthIsKept() {
+            assertAll(
+                () -> assertThat("as wide",
+                    wrapped(TextSegment.literal("a".repeat(19)), PAGE_WIDTH),
+                    contains(List.of("a".repeat(19)))),
+                () -> assertThat("a codepoint wider",
+                    wrapped(TextSegment.literal("a".repeat(19) + "b"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(19)), List.of("b")))
+            );
+        }
+
+        @Test
+        @DisplayName("the first visible codepoint of a line is kept however wide")
+        void theFirstVisibleCodepointIsKept() {
+            assertAll(
+                () -> assertThat("wider than the line",
+                    wrapped(TextSegment.literal("\u00C6\u00C6"), 5),
+                    contains(List.of("\u00C6"), List.of("\u00C6"))),
+                () -> assertThat("a width of 0",
+                    wrapped(TextSegment.literal("ab"), 0),
+                    contains(List.of("a"), List.of("b")))
+            );
+        }
+
+        @Test
+        @DisplayName("a space opening a line before a word wider than the line answers an empty line, and the word "
+            + "breaks inside itself")
+        void aLeadingSpaceBeforeAnOverWideWordAnswersAnEmptyLine() {
+            assertAll(
+                () -> assertThat("a space opening the line",
+                    wrapped(TextSegment.literal(" " + "a".repeat(20)), PAGE_WIDTH),
+                    contains(List.<String>of(), List.of("a".repeat(19)), List.of("a"))),
+                () -> assertThat("a space after a word, which ends the line it is on",
+                    wrapped(TextSegment.literal("aa " + "b".repeat(20)), PAGE_WIDTH),
+                    contains(List.of("aa"), List.of("b".repeat(19)), List.of("b")))
+            );
+        }
+
+        @Test
+        @DisplayName("a zero-width codepoint opening a line is not its first visible one, and one after a visible "
+            + "codepoint leaves the line visible")
+        void aZeroWidthCodepointIsNotVisible() {
+            assertAll(
+                () -> assertThat("a tab, which the font lays out at no width, before a codepoint wider than the line",
+                    wrapped(TextSegment.literal("\t\u00C6"), 5),
+                    contains(List.of("\t\u00C6"))),
+                () -> assertThat("riding on the line it opens",
+                    wrapped(TextSegment.literal("\t" + "a".repeat(20)), PAGE_WIDTH),
+                    contains(List.of("\t" + "a".repeat(19)), List.of("a"))),
+                () -> assertThat("a tab after a visible codepoint, before one that overflows the line",
+                    wrapped(TextSegment.literal("a".repeat(19) + "\ta"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(19) + "\t"), List.of("a")))
+            );
+        }
+
+        @Test
+        @DisplayName("a line break ends a line and is not drawn, and a text ending in one ends in an empty line")
+        void aLineBreakEndsALine() {
+            assertAll(
+                () -> assertThat("between two lines",
+                    wrapped(TextSegment.literal("a\nb"), PAGE_WIDTH),
+                    contains(List.of("a"), List.of("b"))),
+                () -> assertThat("two in a row",
+                    wrapped(TextSegment.literal("\n\n"), PAGE_WIDTH),
+                    contains(List.<String>of(), List.<String>of(), List.<String>of())),
+                () -> assertThat("ending the text",
+                    wrapped(TextSegment.literal("a\n"), PAGE_WIDTH),
+                    contains(List.of("a"), List.<String>of()))
+            );
+        }
+
+        @Test
+        @DisplayName("the whole text is wrapped in one pass, so a space ending a line just before a line break "
+            + "answers an empty line after it")
+        void aSpaceEndingALineBeforeALineBreakAnswersAnEmptyLine() {
+            assertAll(
+                () -> assertThat("a space the line ends at",
+                    wrapped(TextSegment.literal("a".repeat(19) + " \nb"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(19)), List.<String>of(), List.of("b"))),
+                () -> assertThat("a space the line holds",
+                    wrapped(TextSegment.literal("a".repeat(18) + " \nb"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(18) + " "), List.of("b"))),
+                () -> assertThat("a space ending the text",
+                    wrapped(TextSegment.literal("a".repeat(19) + " "), PAGE_WIDTH),
+                    contains(List.of("a".repeat(19))))
+            );
+        }
+
+        @Test
+        @DisplayName("nothing but a space or a line break ends a line, U+2028 included")
+        void nothingElseEndsALine() {
+            assertAll(
+                () -> assertThat("in a line that fits",
+                    wrapped(TextSegment.literal("aaa\u2028bbb"), PAGE_WIDTH),
+                    contains(List.of("aaa\u2028bbb"))),
+                () -> assertThat("before an overflow",
+                    wrapped(TextSegment.literal("aaa\u2028" + "b".repeat(30)), PAGE_WIDTH).getFirst().getFirst(),
+                    startsWith("aaa\u2028b"))
+            );
+        }
+
+        @Test
+        @DisplayName("a segment whose text is empty answers no line, and a text of codes alone one empty line")
+        void anEmptyTextAnswersNoLine() {
+            assertAll(
+                () -> assertThat("an empty text", TextSegment.literal("").wrap(PAGE_WIDTH), is(empty())),
+                () -> assertThat("empty siblings", TextSegment.fromJson("[\"\", \"\"]").wrap(PAGE_WIDTH), is(empty())),
+                () -> assertThat("codes alone",
+                    wrapped(TextSegment.literal("§l"), PAGE_WIDTH),
+                    contains(List.<String>of()))
+            );
+        }
+
+        @Test
+        @DisplayName("each codepoint is measured in the font its style resolves to, a bold face's advance included, "
+            + "a surrogate pair measured once as one codepoint, and a code takes no width")
+        void eachCodepointIsMeasuredInItsStyle() {
+            assertAll(
+                () -> assertThat("a surrogate pair the line holds, before a codepoint that overflows it",
+                    wrapped(TextSegment.literal("a".repeat(17) + "\uD83D\uDE00aa"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(17) + "\uD83D\uDE00"), List.of("aa"))),
+                () -> assertThat("a code",
+                    wrapped(TextSegment.literal("§c" + "a".repeat(19)), PAGE_WIDTH),
+                    contains(List.of("a".repeat(19)))),
+                () -> assertThat("a bold face",
+                    wrapped(TextSegment.fromJson("{\"text\": \"" + "a".repeat(17) + "\", \"bold\": true}"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(16)), List.of("a"))),
+                () -> assertThat("the regular face",
+                    wrapped(TextSegment.literal("a".repeat(17)), PAGE_WIDTH),
+                    contains(List.of("a".repeat(17)))),
+                () -> assertThat("another font",
+                    wrapped(TextSegment.fromJson("{\"text\": \"" + "c".repeat(20) + "\", \"font\": \"minecraft:alt\"}"),
+                        PAGE_WIDTH),
+                    contains(List.of("c".repeat(20))))
+            );
+        }
+
+        @Test
+        @DisplayName("the text after a break opens its line in the style in force there, the codes before the break "
+            + "already read and the codes after it read from there")
+        void theTextAfterABreakOpensInTheStyleInForceThere() {
+            List<LineSegment> carried = TextSegment.literal("x§l" + "a".repeat(16) + " b").wrap(PAGE_WIDTH);
+            List<LineSegment> coloured = TextSegment.literal("§cred " + "x".repeat(18)).wrap(PAGE_WIDTH);
+            List<LineSegment> broken = TextSegment.literal("§la\nb").wrap(PAGE_WIDTH);
+            List<LineSegment> after = TextSegment.literal("a".repeat(20) + "§lb").wrap(PAGE_WIDTH);
+
+            assertAll(
+                () -> assertThat("a format code before a break inside a word",
+                    lines(carried),
+                    contains(List.of("x", "a".repeat(15)), List.of("a b"))),
+                () -> assertThat("carries its format onto the next line",
+                    carried.getLast().getSegments().getFirst().isBold(),
+                    is(true)),
+                () -> assertThat("a colour code before a space",
+                    lines(coloured),
+                    contains(List.of("red"), List.of("x".repeat(18)))),
+                () -> assertThat("carries its colour",
+                    coloured.getLast().getSegments().getFirst().getColor(),
+                    is(Optional.of(ChatColor.Legacy.RED))),
+                () -> assertThat("a format code before a line break",
+                    lines(broken),
+                    contains(List.of("a"), List.of("b"))),
+                () -> assertThat("carries its format past it",
+                    broken.getLast().getSegments().getFirst().isBold(),
+                    is(true)),
+                () -> assertThat("a format code after a break inside a word, in the text the break cuts",
+                    lines(after),
+                    contains(List.of("a".repeat(19)), List.of("a", "b"))),
+                () -> assertThat("read on the next line",
+                    List.of(after.getLast().getSegments().getFirst().isBold(),
+                        after.getLast().getSegments().getLast().isBold()),
+                    contains(false, true))
+            );
+        }
+
+        @Test
+        @DisplayName("the text after a break at a space opens its line in the style that space was walked in, not in "
+            + "the style of the codepoint that overflows")
+        void theTextAfterABreakAtASpaceOpensInThatSpacesStyle() {
+            List<LineSegment> pieces = TextSegment.fromJson("[{\"text\": \"" + "a".repeat(17) + " b\", \"color\": "
+                + "\"red\"}, {\"text\": \"c\", \"color\": \"blue\"}]").wrap(PAGE_WIDTH);
+            List<LineSegment> codes = TextSegment.literal("§l" + "a".repeat(14) + " §cbb§rcc").wrap(PAGE_WIDTH);
+
+            assertAll(
+                () -> assertThat("a space in one piece and the overflow in the next",
+                    lines(pieces),
+                    contains(List.of("a".repeat(17)), List.of("b", "c"))),
+                () -> assertThat("the rest of the space's piece in the space's colour",
+                    pieces.getLast().getSegments().getFirst().getColor(),
+                    is(Optional.of(ChatColor.Legacy.RED))),
+                () -> assertThat("a space in one format and the overflow after a colour code",
+                    lines(codes),
+                    contains(List.of("a".repeat(14)), List.of("bb", "cc"))),
+                () -> assertThat("a reset on the next line returning to the space's format",
+                    codes.getLast().getSegments().getLast().isBold(),
+                    is(true))
+            );
+        }
+
+        @Test
+        @DisplayName("a break cuts only the piece of text it falls in - the pieces before it whole, and the pieces "
+            + "after it in their own styles")
+        void aBreakCutsOnlyThePieceItFallsIn() {
+            List<LineSegment> later = TextSegment.fromJson("[\"\", {\"text\": \"aa\", \"color\": \"red\"}, \""
+                + "b".repeat(18) + "\"]").wrap(PAGE_WIDTH);
+            List<LineSegment> opening = TextSegment.fromJson("[\"aaa\", {\"text\": \" " + "b".repeat(19)
+                + "\", \"color\": \"red\"}]").wrap(PAGE_WIDTH);
+            List<LineSegment> after = TextSegment.fromJson("[{\"text\": \"" + "a".repeat(18) + " b\", \"color\": "
+                + "\"red\"}, {\"text\": \"c\", \"color\": \"blue\"}]").wrap(PAGE_WIDTH);
+
+            assertAll(
+                () -> assertThat("a piece before the break",
+                    lines(later),
+                    contains(List.of("aa", "b".repeat(17)), List.of("b"))),
+                () -> assertThat("kept whole, in its own style",
+                    later.getFirst().getSegments().getFirst().getColor(),
+                    is(Optional.of(ChatColor.Legacy.RED))),
+                () -> assertThat("a space opening the next piece",
+                    lines(opening),
+                    contains(List.of("aaa"), List.of("b".repeat(19)))),
+                () -> assertThat("dropped from that piece, which keeps its style",
+                    opening.getLast().getSegments().getFirst().getColor(),
+                    is(Optional.of(ChatColor.Legacy.RED))),
+                () -> assertThat("a piece after the break", texts(after.getLast().getSegments()), contains("b", "c")),
+                () -> assertThat("in its own style",
+                    after.getLast().getSegments().getLast().getColor(),
+                    is(Optional.of(ChatColor.Legacy.BLUE)))
+            );
+        }
+
+        @Test
+        @DisplayName("a reset is read as no style at all as the text is measured, so the text after it measures in the "
+            + "regular face and draws in its own")
+        void aResetIsMeasuredAsNoStyle() {
+            TextSegment reset = TextSegment.fromJson("{\"text\": \"§r" + "a".repeat(19) + "\", \"bold\": true}");
+
+            assertAll(
+                () -> assertThat("the text after a reset",
+                    wrapped(reset, PAGE_WIDTH),
+                    contains(List.of("a".repeat(19)))),
+                () -> assertThat("drawn bold",
+                    reset.wrap(PAGE_WIDTH).getFirst().getSegments().getFirst().isBold(),
+                    is(true)),
+                () -> assertThat("the same text with no reset",
+                    wrapped(TextSegment.fromJson("{\"text\": \"" + "a".repeat(19) + "\", \"bold\": true}"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(16)), List.of("aaa")))
+            );
+        }
+
+        @Test
+        @DisplayName("the text after a reset a break follows opens its line in no style at all, not in the page's")
+        void aResetABreakFollowsOpensTheNextLineInNoStyle() {
+            List<LineSegment> title = TextSegment.literal("§lTitle§r\nBody").inherit(PAGE_STYLE).wrap(PAGE_WIDTH);
+            List<LineSegment> spaced = TextSegment.literal("§cred§r " + "x".repeat(16) + " tail")
+                .inherit(PAGE_STYLE)
+                .wrap(PAGE_WIDTH);
+            List<LineSegment> inWord = TextSegment.literal("x".repeat(10) + "§r" + "y".repeat(12))
+                .inherit(PAGE_STYLE)
+                .wrap(PAGE_WIDTH);
+            Optional<Integer> black = Optional.of(0);
+            Optional<Integer> none = Optional.empty();
+
+            assertAll(
+                () -> assertThat("a line break after a reset",
+                    lines(title),
+                    contains(List.of("Title"), List.of("Body"))),
+                () -> assertThat("the line before it in the page's colours",
+                    colours(title.getFirst().getSegments().getFirst()),
+                    contains(black, black)),
+                () -> assertThat("the line after it in none",
+                    colours(title.getLast().getSegments().getFirst()),
+                    contains(none, none)),
+                () -> assertThat("a space after a reset",
+                    lines(spaced),
+                    contains(List.of("red"), List.of("x".repeat(16)), List.of("tail"))),
+                () -> assertThat("every line after it in no colour",
+                    List.of(colours(spaced.get(1).getSegments().getFirst()),
+                        colours(spaced.getLast().getSegments().getFirst())),
+                    contains(List.of(none, none), List.of(none, none))),
+                () -> assertThat("a break inside a word after a reset",
+                    lines(inWord),
+                    contains(List.of("x".repeat(10) + "y".repeat(9)), List.of("yyy"))),
+                () -> assertThat("the line after it in no colour",
+                    colours(inWord.getLast().getSegments().getFirst()),
+                    contains(none, none))
+            );
+        }
+
+        @Test
+        @DisplayName("a reset after a break returns to the style the line opens in, the codes before the break "
+            + "included")
+        void aResetAfterABreakReturnsToTheStyleTheLineOpensIn() {
+            List<LineSegment> lines = TextSegment.literal("§l" + "a".repeat(15) + " bbb§rccc")
+                .inherit(PAGE_STYLE)
+                .wrap(PAGE_WIDTH);
+            TextSegment opened = lines.getLast().getSegments().getFirst();
+
+            assertAll(
+                () -> assertThat(lines(lines), contains(List.of("a".repeat(15)), List.of("bbbccc"))),
+                () -> assertThat("in the format the break left", opened.isBold(), is(true)),
+                () -> assertThat("and the page's colours", colours(opened), contains(Optional.of(0), Optional.of(0)))
+            );
+        }
+
+        @Test
+        @DisplayName("a section sign directly before a line break takes it as its code, so no line ends there")
+        void aSignBeforeALineBreakTakesIt() {
+            assertThat(wrapped(TextSegment.literal("a§\nb"), PAGE_WIDTH), contains(List.of("ab")));
+        }
+
+        @Test
+        @DisplayName("each line's runs are read as toLines reads a line's - neighbours in one style joined, the edge "
+            + "of a sprite cut, and the text kept exactly as written")
+        void eachLineIsReadAsToLinesReadsALine() {
+            assertAll(
+                () -> assertThat("neighbours in one style",
+                    wrapped(TextSegment.fromJson("[\"aa bb\", \"cc\"]"), PAGE_WIDTH),
+                    contains(List.of("aa bbcc"))),
+                () -> assertThat("the edge of a sprite",
+                    wrapped(TextSegment.fromJson("[\"\", \"AB\", {\"type\": \"object\", \"sprite\": \"item/apple\", "
+                        + "\"fallback\": \"x\"}, \"CD\"]"), PAGE_WIDTH),
+                    contains(List.of("AB", "x", "CD"))),
+                () -> assertThat("neighbours in one style after a sprite",
+                    wrapped(TextSegment.fromJson("[\"\", {\"type\": \"object\", \"sprite\": \"item/apple\", "
+                        + "\"fallback\": \"x\"}, \"a\", \"b\"]"), PAGE_WIDTH),
+                    contains(List.of("x", "ab"))),
+                () -> assertThat("and inside a sprite's text",
+                    wrapped(TextSegment.fromJson("[\"\", {\"type\": \"object\", \"sprite\": \"item/apple\", "
+                        + "\"fallback\": {\"text\": \"x\", \"extra\": [\"y\"]}}]"), PAGE_WIDTH),
+                    contains(List.of("xy"))),
+                () -> assertThat("the edge of a sprite whose text a break cuts",
+                    wrapped(TextSegment.fromJson("[\"\", \"" + "a".repeat(10) + "\", {\"type\": \"object\", "
+                        + "\"sprite\": \"item/apple\", \"fallback\": \"" + "x".repeat(12) + "\"}]"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(10), "x".repeat(9)), List.of("xxx"))),
+                () -> assertThat("an apostrophe after a break",
+                    wrapped(TextSegment.literal("a".repeat(18) + " it's"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(18)), List.of("it's"))),
+                () -> assertThat("a surrogate pair after a break",
+                    wrapped(TextSegment.literal("a".repeat(18) + "\uD83D\uDE00aa"), PAGE_WIDTH),
+                    contains(List.of("a".repeat(18)), List.of("\uD83D\uDE00aa")))
+            );
+        }
+
+        /**
+         * Wraps a segment and answers each line's run texts, in order.
+         *
+         * @param segment the segment
+         * @param width the width it wraps at, in mcPixels
+         * @return each line's run texts
+         */
+        private static List<List<String>> wrapped(TextSegment segment, int width) {
+            return lines(segment.wrap(width));
+        }
+
+        /**
+         * Answers each line's run texts, in order.
+         *
+         * @param lines the lines
+         * @return each line's run texts
+         */
+        private static List<List<String>> lines(List<LineSegment> lines) {
+            return lines.stream().map(line -> texts(line.getSegments())).toList();
+        }
+
+        /**
+         * Answers the two colours a page's style sets on a run - its colour's value and its shadow colour's ARGB
+         * value, each empty where the run has none.
+         *
+         * @param run the run
+         * @return the colour and the shadow colour
+         */
+        private static List<Optional<Integer>> colours(TextSegment run) {
+            return List.of(
+                run.getColor().map(color -> color.rgb() & 0xFFFFFF),
+                run.getShadowColor().map(ChatColor::rgb)
+            );
+        }
+
     }
 
     /**

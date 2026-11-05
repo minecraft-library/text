@@ -20,6 +20,7 @@ import lib.minecraft.text.event.HoverEvent;
 import lib.minecraft.text.exception.TextJsonException;
 import lib.minecraft.text.font.FontId;
 import lib.minecraft.text.font.MinecraftFont;
+import lib.minecraft.text.font.MinecraftFontMetrics;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -28,8 +29,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -72,6 +75,12 @@ import java.util.function.Function;
  * character is drawn. A code ends the run before it, and the run after it joins that one again as any
  * neighbour in its style does, so a gradient, which keeps two runs apart, restarts at each code in its
  * text, even one that leaves the style as it was.</p>
+ *
+ * <p>{@link #wrap(int)} wraps a component into lines at a width as the client wraps a book page: it measures
+ * the text as written, reading its codes as it goes, ends each line where the client's line splitter ends
+ * it, opens the text after each break in the style in force there, and then reads each line's codes for
+ * drawing. {@link #inherit(TextSegment)} merges a style under a component, as the client merges a book's
+ * page style under the page before it wraps it.</p>
  */
 @Getter
 @ToString
@@ -243,6 +252,32 @@ public final class TextSegment {
     }
 
     /**
+     * Returns this segment with each style field it does not set taken from {@code style}, its contents and
+     * siblings kept, as the client's {@code ComponentUtils#mergeStyles} merges a style under a component -
+     * which is how a book page takes the page's text style - and as a sibling inherits its parent's style.
+     *
+     * @param style the segment whose style fields fill in the ones this segment does not set, its contents
+     *     and siblings not read
+     * @return the segment in the merged style
+     */
+    public @NotNull TextSegment inherit(@NotNull TextSegment style) {
+        return this.mutate()
+            .color(this.color.or(() -> style.color))
+            .gradient(this.gradient.or(() -> style.gradient))
+            .shadowColor(this.shadowColor.or(() -> style.shadowColor))
+            .bold(this.bold.or(() -> style.bold))
+            .italic(this.italic.or(() -> style.italic))
+            .underlined(this.underlined.or(() -> style.underlined))
+            .strikethrough(this.strikethrough.or(() -> style.strikethrough))
+            .obfuscated(this.obfuscated.or(() -> style.obfuscated))
+            .clickEvent(this.clickEvent.or(() -> style.clickEvent))
+            .hoverEvent(this.hoverEvent.or(() -> style.hoverEvent))
+            .insertion(this.insertion.or(() -> style.insertion))
+            .font(this.font.or(() -> style.font))
+            .build();
+    }
+
+    /**
      * Returns the text this segment and its siblings hold, unresolved and without their style fields, as
      * written - a legacy code in it included, as the client's {@code Component#getString} keeps one.
      *
@@ -277,7 +312,7 @@ public final class TextSegment {
      * it as its code, so no line begins there. Where the client wraps a text before it draws it, as it wraps
      * a book page, its line splitter reads the codes as it wraps, a reset as no style at all, and opens the
      * text after each break in the style in force there. The lines answered here hold no code, so they
-     * cannot be wrapped as the client wraps a page, which it wraps from the page's component with the codes
+     * cannot be wrapped as the client wraps a text; {@link #wrap(int)} wraps the component itself, its codes
      * still in its text.</p>
      *
      * @return the lines, at least one
@@ -287,7 +322,7 @@ public final class TextSegment {
         List<TextSegment> line = new ArrayList<>();
         int[] joinsFrom = { 0 };
 
-        this.flatten(null, run -> {
+        this.flatten(run -> {
             String[] pieces = run.getText().split("\n", -1);
 
             for (int i = 0; i < pieces.length; i++) {
@@ -302,6 +337,88 @@ public final class TextSegment {
         }, () -> joinsFrom[0] = line.size());
 
         lines.add(LineSegment.builder().segments(Concurrent.newList(line)).build());
+        return lines;
+    }
+
+    /**
+     * Wraps this segment and its siblings into the lines the client's {@code Font#split} cuts them into at a
+     * width, as the client wraps a book page, each line's runs read for drawing as {@link #toLines()} reads
+     * a line's.
+     *
+     * <p>The text is wrapped as written, its legacy codes still in it. Each codepoint is measured by its
+     * advance in the font its style resolves to, a bold face's own advance included, the style being what
+     * the codes before it leave as the text is walked - from its own style, a reset returning to no style at
+     * all. A line ends at a {@code \n}, which is not drawn, and otherwise at the first codepoint that takes it
+     * strictly past the width once a codepoint of non-zero advance has been seen on it: at the last space
+     * walked on the line, that codepoint included, which is not drawn, or, where there is none, at that
+     * codepoint, which opens the next line. So a line exactly as wide as the width is kept, the first visible
+     * codepoint of a line is kept however wide, a zero-width codepoint opening a line is not its first visible
+     * one and a negative advance is, a space before the last one stays at the end of its line, a space opening
+     * a line before a word wider than the width answers an empty line, and a space ending a line just before a
+     * {@code \n} answers an empty line after it. Nothing else ends a line, U+2028 included, and a width below 1
+     * wraps at 1.</p>
+     *
+     * <p>The text after a break opens its line in the style in force at the break - at a space, the style that
+     * space was walked in - as the codes before it left it, and its own codes are read again from there; the
+     * pieces of text after it keep their own styles. So the text after a reset a break follows opens its line
+     * in no style at all. Each line's codes are then read for drawing from the style each of its pieces opens
+     * in, a reset returning to that style.</p>
+     *
+     * <p>A sprite measures as the text drawn in its place, a bold glyph at its bold face's advance and a lone
+     * surrogate as its own glyph, as this library draws them, where the client measures one U+FFFC in the
+     * sprite's font, adds each glyph's own bold offset to its regular advance and measures U+FFFD. So a bold
+     * glyph whose bold face lacks the client's bold offset - every glyph of a font with no bold face among
+     * them - measures off the client's.</p>
+     *
+     * @param maxWidthMcPixels the width a line may run to, in mcPixels
+     * @return the lines - none for a segment whose text, its siblings' included, is empty, and an empty one
+     *     after a {@code \n} ending the text
+     */
+    public @NotNull ConcurrentList<LineSegment> wrap(int maxWidthMcPixels) {
+        List<Piece> pieces = new ArrayList<>();
+        StringBuilder flat = new StringBuilder();
+        boolean[] cut = { false };
+
+        this.visit(null, (style, text) -> {
+            if (text.isEmpty())
+                return;
+
+            pieces.add(new Piece(style, text, cut[0]));
+            flat.append(text);
+            cut[0] = false;
+        }, () -> cut[0] = true);
+
+        ConcurrentList<LineSegment> lines = Concurrent.newList();
+        TextSegment noStyle = builder().build();
+        float maxWidth = Math.max(maxWidthMcPixels, 1f);
+        boolean endsAtLineBreak = false;
+        boolean broken = true;
+
+        while (broken) {
+            broken = false;
+            LineBreakFinder finder = new LineBreakFinder(maxWidth, noStyle);
+
+            for (Piece piece : pieces) {
+                if (piece.style().readCodes(piece.text(), ChatFormat.SECTION_SYMBOL, noStyle, finder)) {
+                    finder.offset += piece.text().length();
+                    continue;
+                }
+
+                char at = flat.charAt(finder.lineBreak);
+                int skip = at == '\n' || at == ' ' ? 1 : 0;
+                endsAtLineBreak = at == '\n';
+                lines.add(line(cutLine(pieces, finder.lineBreak, skip, finder.lineBreakStyle)));
+                flat.delete(0, finder.lineBreak + skip);
+                broken = true;
+                break;
+            }
+        }
+
+        if (!pieces.isEmpty())
+            lines.add(line(pieces));
+        else if (endsAtLineBreak)
+            lines.add(line(List.of()));
+
         return lines;
     }
 
@@ -329,7 +446,7 @@ public final class TextSegment {
         Character[] color = { null };
         EnumSet<ChatFormat> formats = EnumSet.noneOf(ChatFormat.class);
 
-        this.flatten(null, run -> {
+        this.flatten(run -> {
             if (run.getText().isEmpty())
                 return;
 
@@ -492,8 +609,11 @@ public final class TextSegment {
      */
     public static @NotNull LineSegment fromLegacy(@NotNull String legacyText, char symbolSubstitute) {
         List<TextSegment> runs = new ArrayList<>();
-        builder().build().readCodes(legacyText, symbolSubstitute,
-            run -> appendRun(runs, run.mutate().text(run.getText()).build(), 0));
+        TextSegment noStyle = builder().build();
+        noStyle.readCodes(legacyText, symbolSubstitute, noStyle, (run, start) -> {
+            appendRun(runs, run.mutate().text(run.getText()).build(), 0);
+            return true;
+        });
         return LineSegment.builder().segments(Concurrent.newList(runs)).build();
     }
 
@@ -537,54 +657,54 @@ public final class TextSegment {
     }
 
     /**
-     * Visits the runs this segment and its siblings show, in order, each in the style it inherits from
-     * {@code parent} where it sets none of its own and with the legacy codes in its text read, and runs
-     * {@code cut} on either side of a sprite's runs, since the client draws a sprite as a run of its own in the
-     * sprite's font.
+     * Visits the pieces of text this segment and its siblings show, in order, each with the style it is
+     * shown in - inherited from {@code parent} where it sets none of its own - and its legacy codes still in
+     * it, as the client's {@code FormattedText#visit} hands a component's pieces on, and runs {@code cut} on
+     * either side of a sprite's pieces, since the client draws a sprite as a run of its own in the sprite's
+     * font.
      *
      * @param parent the segment this one inherits its style from, or {@code null} for none
-     * @param runs the visitor of each run
-     * @param cut the action run on either side of a sprite's runs
+     * @param pieces the visitor of each piece's style and text
+     * @param cut the action run on either side of a sprite's pieces
      */
-    private void flatten(@Nullable TextSegment parent, @NotNull Consumer<TextSegment> runs, @NotNull Runnable cut) {
+    private void visit(
+        @Nullable TextSegment parent,
+        @NotNull BiConsumer<TextSegment, String> pieces,
+        @NotNull Runnable cut
+    ) {
         TextSegment styled = parent == null ? this : this.inherit(parent);
 
         switch (this.contents) {
-            case TextContents.Text text -> styled.readCodes(text.text(), ChatFormat.SECTION_SYMBOL, runs);
-            case TextContents.Translatable translatable -> translatable.decompose().forEach(part -> part.flatten(styled, runs, cut));
+            case TextContents.Text text -> pieces.accept(styled, text.text());
+            case TextContents.Translatable translatable ->
+                translatable.decompose().forEach(part -> part.visit(styled, pieces, cut));
             case TextContents.Sprite sprite -> {
                 cut.run();
                 sprite.fallback().ifPresentOrElse(
-                    fallback -> fallback.flatten(styled, runs, cut),
-                    () -> styled.readCodes(sprite.plainText(), ChatFormat.SECTION_SYMBOL, runs)
+                    fallback -> fallback.visit(styled, pieces, cut),
+                    () -> pieces.accept(styled, sprite.plainText())
                 );
                 cut.run();
             }
-            default -> styled.readCodes(this.contents.plainText(), ChatFormat.SECTION_SYMBOL, runs);
+            default -> pieces.accept(styled, this.contents.plainText());
         }
 
-        this.extra.forEach(sibling -> sibling.flatten(styled, runs, cut));
+        this.extra.forEach(sibling -> sibling.visit(styled, pieces, cut));
     }
 
     /**
-     * Returns this segment with each style field it does not set taken from {@code parent}, as vanilla
-     * applies a style to the one it inherits.
+     * Visits the runs this segment and its siblings show, in order - each piece of text
+     * {@link #visit(TextSegment, BiConsumer, Runnable) visit} hands on, its legacy codes read from the style
+     * it is shown in - and runs {@code cut} on either side of a sprite's runs.
+     *
+     * @param runs the visitor of each run
+     * @param cut the action run on either side of a sprite's runs
      */
-    private @NotNull TextSegment inherit(@NotNull TextSegment parent) {
-        return this.mutate()
-            .color(this.color.or(() -> parent.color))
-            .gradient(this.gradient.or(() -> parent.gradient))
-            .shadowColor(this.shadowColor.or(() -> parent.shadowColor))
-            .bold(this.bold.or(() -> parent.bold))
-            .italic(this.italic.or(() -> parent.italic))
-            .underlined(this.underlined.or(() -> parent.underlined))
-            .strikethrough(this.strikethrough.or(() -> parent.strikethrough))
-            .obfuscated(this.obfuscated.or(() -> parent.obfuscated))
-            .clickEvent(this.clickEvent.or(() -> parent.clickEvent))
-            .hoverEvent(this.hoverEvent.or(() -> parent.hoverEvent))
-            .insertion(this.insertion.or(() -> parent.insertion))
-            .font(this.font.or(() -> parent.font))
-            .build();
+    private void flatten(@NotNull Consumer<TextSegment> runs, @NotNull Runnable cut) {
+        this.visit(null, (style, text) -> style.readCodes(text, ChatFormat.SECTION_SYMBOL, style, (run, start) -> {
+            runs.accept(run);
+            return true;
+        }), cut);
     }
 
     /**
@@ -595,42 +715,49 @@ public final class TextSegment {
     }
 
     /**
-     * Visits the runs a text shown in this segment's style is drawn as, reading each legacy code in it as
-     * the client's font reads one: a section sign and the character after it restyle the rest of the text,
-     * and neither is drawn, so each run holds the text between two codes in the style the codes before it
-     * leave. The style opens as this segment's own, which a reset returns to. A character that is no code is
-     * dropped with the sign before it, a sign ending the text ends it, and a run is handed on at every code,
-     * so a code that parts the two halves of a surrogate pair leaves them two runs.
+     * Walks a text shown in this segment's style, reading each legacy code in it as the client's font reads
+     * one, and hands each run of it on: a section sign and the character after it restyle the rest of the
+     * text, and neither is drawn, so each run holds the text between two codes in the style the codes before
+     * it leave. The style opens as this segment's own, and a reset answers {@code reset}. A character that is
+     * no code is dropped with the sign before it, a sign ending the text ends the walk, and a run is handed
+     * on at every code, so a code that parts the two halves of a surrogate pair leaves them two runs.
      *
      * @param text the text
      * @param symbolSubstitute a character read as the section sign where a code character follows it as
      *     written - the section sign itself for text that has no substitute
-     * @param runs the visitor of each run, empty ones included
+     * @param reset the style a reset returns to
+     * @param runs the receiver of each run, empty ones included, which ends the walk by answering
+     *     {@code false}
+     * @return whether the walk went on to the end of the text
      */
-    private void readCodes(@NotNull String text, char symbolSubstitute, @NotNull Consumer<TextSegment> runs) {
+    private boolean readCodes(
+        @NotNull String text,
+        char symbolSubstitute,
+        @NotNull TextSegment reset,
+        @NotNull CodeRuns runs
+    ) {
         TextSegment style = this;
-        StringBuilder piece = new StringBuilder();
+        int start = 0;
 
         for (int i = 0; i < text.length(); i++) {
             char ch = text.charAt(i);
             boolean sign = ch == ChatFormat.SECTION_SYMBOL
                 || ch == symbolSubstitute && i + 1 < text.length() && ChatFormat.isValid(text.charAt(i + 1));
 
-            if (!sign) {
-                piece.append(ch);
+            if (!sign)
                 continue;
-            }
 
-            runs.accept(style.run(piece.toString()));
-            piece.setLength(0);
+            if (!runs.accept(style.run(text.substring(start, i)), start))
+                return false;
 
             if (++i == text.length())
-                break;
+                return true;
 
-            style = style.applyLegacyCode(text.charAt(i), this);
+            style = style.applyLegacyCode(text.charAt(i), reset);
+            start = i + 1;
         }
 
-        runs.accept(style.run(piece.toString()));
+        return runs.accept(style.run(text.substring(start)), start);
     }
 
     /**
@@ -730,6 +857,95 @@ public final class TextSegment {
     }
 
     /**
+     * Cuts one line's text off the front of the text being wrapped, as the client's line splitter cuts one:
+     * the pieces before {@code position} whole, and the head of the piece it falls in, in that piece's own
+     * style. The {@code skip} characters at {@code position} are dropped, and the rest of that piece takes
+     * {@code splitStyle}, its legacy codes kept in its text. A piece the cut empties is dropped.
+     *
+     * @param pieces the pieces of the text left to wrap, from which the line's are removed
+     * @param position where the line ends in the text the pieces hold
+     * @param skip how many characters at {@code position} are dropped - one for a space or a {@code \n}, none
+     *     otherwise
+     * @param splitStyle the style the text after the line opens in
+     * @return the line's pieces
+     */
+    private static @NotNull List<Piece> cutLine(
+        @NotNull List<Piece> pieces,
+        int position,
+        int skip,
+        @NotNull TextSegment splitStyle
+    ) {
+        List<Piece> line = new ArrayList<>();
+        ListIterator<Piece> iterator = pieces.listIterator();
+        int remaining = position;
+        boolean found = false;
+
+        while (iterator.hasNext()) {
+            Piece piece = iterator.next();
+            int length = piece.text().length();
+
+            if (!found) {
+                if (remaining > length) {
+                    line.add(piece);
+                    iterator.remove();
+                    remaining -= length;
+                    continue;
+                }
+
+                String head = piece.text().substring(0, remaining);
+
+                if (!head.isEmpty())
+                    line.add(new Piece(piece.style(), head, piece.cutBefore()));
+
+                remaining += skip;
+                found = true;
+            }
+
+            if (remaining > length) {
+                iterator.remove();
+                remaining -= length;
+                continue;
+            }
+
+            String rest = piece.text().substring(remaining);
+
+            if (rest.isEmpty())
+                iterator.remove();
+            else
+                iterator.set(new Piece(splitStyle, rest, false));
+
+            break;
+        }
+
+        return line;
+    }
+
+    /**
+     * Reads a wrapped line's pieces for drawing into a line of runs, each piece's legacy codes read from the
+     * style it opens in, a reset returning to that style, and the runs ended as {@link #toLines()} ends a
+     * line's.
+     *
+     * @param pieces the line's pieces
+     * @return the line
+     */
+    private static @NotNull LineSegment line(@NotNull List<Piece> pieces) {
+        List<TextSegment> runs = new ArrayList<>();
+        int[] joinsFrom = { 0 };
+
+        for (Piece piece : pieces) {
+            if (piece.cutBefore())
+                joinsFrom[0] = runs.size();
+
+            piece.style().readCodes(piece.text(), ChatFormat.SECTION_SYMBOL, piece.style(), (run, start) -> {
+                appendRun(runs, run, joinsFrom[0]);
+                return true;
+            });
+        }
+
+        return LineSegment.builder().segments(Concurrent.newList(runs)).build();
+    }
+
+    /**
      * Returns the legacy formats this segment is drawn with.
      */
     private @NotNull EnumSet<ChatFormat> legacyFormats() {
@@ -824,6 +1040,164 @@ public final class TextSegment {
         return StringUtil.defaultIfEmpty(text, "")
             .replaceAll("(?<!\\\\)'", "’") // Handle Unescaped Windows Apostrophe
             .replaceAll("\\\\'", "'"); // Remove Escaped Backslash
+    }
+
+    /**
+     * The receiver of each run a walk of a text's legacy codes hands on.
+     */
+    @FunctionalInterface
+    private interface CodeRuns {
+
+        /**
+         * Receives one run - the text between two codes, in the style the codes before it leave.
+         *
+         * @param run the run
+         * @param start where the run's text starts in the text walked
+         * @return whether the walk goes on
+         */
+        boolean accept(@NotNull TextSegment run, int start);
+
+    }
+
+    /**
+     * A piece of a text being wrapped, as written, in the style it opens in.
+     *
+     * @param style the style the text opens in, which a reset in it returns to when its line is read for drawing
+     * @param text the text, its legacy codes still in it
+     * @param cutBefore whether the edge of a sprite falls before it, so its first run extends no run before it
+     */
+    private record Piece(@NotNull TextSegment style, @NotNull String text, boolean cutBefore) {}
+
+    /**
+     * The finder of where a line being wrapped ends, as the client's line splitter finds it, walking the
+     * line's text a run at a time in the style the legacy codes before each run leave.
+     */
+    private static final class LineBreakFinder implements CodeRuns {
+
+        /**
+         * The width a line may run to, in mcPixels.
+         */
+        private final float maxWidth;
+
+        /**
+         * Where the text of the piece being walked starts in the text left to wrap.
+         */
+        private int offset;
+
+        /**
+         * The advances walked on the line so far, in mcPixels.
+         */
+        private float width;
+
+        /**
+         * Whether a codepoint of non-zero advance has been walked on the line.
+         */
+        private boolean hadNonZeroWidthChar;
+
+        /**
+         * Where the last space walked on the line sits, or {@code -1} for none.
+         */
+        private int lastSpace = -1;
+
+        /**
+         * The style the last space walked on the line is in.
+         */
+        private @NotNull TextSegment lastSpaceStyle;
+
+        /**
+         * Where the line ends, or {@code -1} until that is found.
+         */
+        private int lineBreak = -1;
+
+        /**
+         * The style in force where the line ends, which the text after it opens its line in.
+         */
+        private @NotNull TextSegment lineBreakStyle;
+
+        /**
+         * Starts a finder for one line.
+         *
+         * @param maxWidth the width the line may run to, in mcPixels
+         * @param noStyle the style the two remembered styles start as
+         */
+        private LineBreakFinder(float maxWidth, @NotNull TextSegment noStyle) {
+            this.maxWidth = maxWidth;
+            this.lastSpaceStyle = noStyle;
+            this.lineBreakStyle = noStyle;
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public boolean accept(@NotNull TextSegment run, int start) {
+            String text = run.getText();
+            MinecraftFontMetrics metrics = run.resolveFont().metrics();
+            int i = 0;
+
+            while (i < text.length()) {
+                int codepoint = text.codePointAt(i);
+
+                if (!this.accept(this.offset + start + i, run, metrics, codepoint))
+                    return false;
+
+                i += Character.charCount(codepoint);
+            }
+
+            return true;
+        }
+
+        /**
+         * Walks one codepoint of the line, as the client's line splitter walks one: a {@code \n} ends the line
+         * at once, a space is remembered before its advance is added, and once a codepoint of non-zero advance
+         * has been walked, the first one taking the line strictly past the width ends it - at the last space
+         * walked, or at that codepoint where there is none.
+         *
+         * @param position where the codepoint sits in the text left to wrap
+         * @param style the style the codepoint is walked in
+         * @param metrics the metrics of the font that style resolves to
+         * @param codepoint the codepoint
+         * @return whether the line goes on
+         */
+        private boolean accept(
+            int position,
+            @NotNull TextSegment style,
+            @NotNull MinecraftFontMetrics metrics,
+            int codepoint
+        ) {
+            if (codepoint == '\n')
+                return this.breakAt(position, style);
+
+            if (codepoint == ' ') {
+                this.lastSpace = position;
+                this.lastSpaceStyle = style;
+            }
+
+            float advance = (float) (metrics.advanceOf(codepoint) / MinecraftFont.MC_PIXEL_SCALE);
+            this.width += advance;
+
+            if (this.hadNonZeroWidthChar && this.width > this.maxWidth) {
+                if (this.lastSpace != -1)
+                    return this.breakAt(this.lastSpace, this.lastSpaceStyle);
+
+                return this.breakAt(position, style);
+            }
+
+            this.hadNonZeroWidthChar |= advance != 0;
+            return true;
+        }
+
+        /**
+         * Ends the line.
+         *
+         * @param position where the line ends in the text left to wrap
+         * @param style the style in force there
+         * @return {@code false}, ending the walk
+         */
+        private boolean breakAt(int position, @NotNull TextSegment style) {
+            this.lineBreak = position;
+            this.lineBreakStyle = style;
+            return false;
+        }
+
     }
 
     /**
