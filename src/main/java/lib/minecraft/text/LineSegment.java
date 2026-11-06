@@ -62,10 +62,10 @@ public final class LineSegment {
      * Reads legacy text into lines of runs, split at each line break in it - {@code \r\n}, {@code \n}, or a
      * backslash written before an {@code n} - each line read as {@link TextSegment#fromLegacy(String, char)}
      * reads one, so a code's style ends at its line and a section sign ending a line is dropped.
-     *
-     * <p>{@code symbolSubstitute} stands for the section sign ({@link ChatFormat#SECTION_SYMBOL}) only before a
+     * <p>
+     * {@code symbolSubstitute} stands for the section sign ({@link ChatFormat#SECTION_SYMBOL}) only before a
      * code character written as the code is, and is text anywhere else. Neighbours in one style are one run,
-     * and an empty line or a line of codes alone is a line of no runs.</p>
+     * and an empty line or a line of codes alone is a line of no runs.
      *
      * @param legacyText the legacy text
      * @param symbolSubstitute the character that stands for the section sign before a code

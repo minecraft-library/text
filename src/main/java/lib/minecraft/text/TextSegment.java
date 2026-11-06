@@ -39,22 +39,22 @@ import java.util.function.Function;
 /**
  * A 26.1 text component - what it shows, the style it shows it in, and the components appended after it,
  * each of which inherits that style wherever it sets none of its own.
- *
- * <p>Every style field is three-state, as vanilla's are: absent inherits from the parent, and present
+ * <p>
+ * Every style field is three-state, as vanilla's are: absent inherits from the parent, and present
  * {@code false} differs from absent - {@code "italic": false} turns off the italic a lore line otherwise
  * inherits. Each {@code isX()} accessor answers whether the segment is drawn that way, which it is only
- * where the flag is present and {@code true}; each {@code getX()} accessor answers the field itself.</p>
- *
- * <p>{@link #fromJson(JsonElement)} reads every form vanilla reads - a plain string, a non-empty list whose
+ * where the flag is present and {@code true}; each {@code getX()} accessor answers the field itself.
+ * <p>
+ * {@link #fromJson(JsonElement)} reads every form vanilla reads - a plain string, a non-empty list whose
  * first element the rest are appended to, and an object - and refuses what vanilla refuses, which includes a
  * flag that is not a JSON boolean and a colour name not spelled as vanilla spells it. A {@code gradient}
  * member, which vanilla ignores, carries a {@link GradientSpec}. {@link #toJson()} writes what vanilla
- * writes, a plain string wherever the segment is plain text in no style.</p>
- *
- * <p>Two segments are equal when they hold the same contents, style and siblings, a colour comparing by its
- * value as vanilla compares it - so {@code red} equals {@code #FF5555}.</p>
- *
- * <p>A segment is also the run the font renderer draws. {@link #toLines()} flattens a component into
+ * writes, a plain string wherever the segment is plain text in no style.
+ * <p>
+ * Two segments are equal when they hold the same contents, style and siblings, a colour comparing by its
+ * value as vanilla compares it - so {@code red} equals {@code #FF5555}.
+ * <p>
+ * A segment is also the run the font renderer draws. {@link #toLines()} flattens a component into
  * {@link LineSegment lines} of runs, and {@link #fromLegacy(String, char)} reads section-coded text
  * straight into a line of them. Each run is plain text in the style it is shown in, and a line is cut
  * into runs wherever the style changes, as the client's font cuts one by its {@code Style#equals} - the
@@ -66,21 +66,21 @@ import java.util.function.Function;
  * which the client draws as two replacement characters rather than one codepoint. A run therefore opens
  * where the client's font opens one, which is where the client leads an underline or strikethrough one
  * mcPixel left of the first glyph. The client also cuts a line it reorders for right-to-left text at
- * each visual run, and no such reordering is modelled here.</p>
- *
- * <p>A component keeps a section sign ({@link ChatFormat#SECTION_SYMBOL}) and the character after it in
+ * each visual run, and no such reordering is modelled here.
+ * <p>
+ * A component keeps a section sign ({@link ChatFormat#SECTION_SYMBOL}) and the character after it in
  * its text as written, as the client's component does, and the client reads the two, wherever they fall in
  * a text it draws, as a code that restyles the rest of that text. The runs {@link #toLines()} and
  * {@link #fromLegacy(String, char)} answer are read the same way, so they hold no legacy code and neither
  * character is drawn. A code ends the run before it, and the run after it joins that one again as any
  * neighbour in its style does, so a gradient, which keeps two runs apart, restarts at each code in its
- * text, even one that leaves the style as it was.</p>
- *
- * <p>{@link #wrap(int)} wraps a component into lines at a width as the client wraps a book page: it measures
+ * text, even one that leaves the style as it was.
+ * <p>
+ * {@link #wrap(int)} wraps a component into lines at a width as the client wraps a book page: it measures
  * the text as written, reading its codes as it goes, ends each line where the client's line splitter ends
  * it, opens the text after each break in the style in force there, and then reads each line's codes for
  * drawing. {@link #inherit(TextSegment)} merges a style under a component, as the client merges a book's
- * page style under the page before it wraps it.</p>
+ * page style under the page before it wraps it.
  */
 @Getter
 @ToString
@@ -305,15 +305,15 @@ public final class TextSegment {
      * {@code \n}. Neighbours in one style on a line are one run and empty text is none, as the client's font
      * cuts a line, save where a gradient on either side, the edge of a sprite or a surrogate pair split
      * between them keeps the two apart.
-     *
-     * <p>The codes are read as the client's font reads them in a text it draws: a code restyles the rest of
+     * <p>
+     * The codes are read as the client's font reads them in a text it draws: a code restyles the rest of
      * the text it sits in and no other component's, a reset returns to the style that text is shown in, a
      * code's style carries past a {@code \n} in the same text, and a sign directly before a {@code \n} takes
      * it as its code, so no line begins there. Where the client wraps a text before it draws it, as it wraps
      * a book page, its line splitter reads the codes as it wraps, a reset as no style at all, and opens the
      * text after each break in the style in force there. The lines answered here hold no code, so they
      * cannot be wrapped as the client wraps a text; {@link #wrap(int)} wraps the component itself, its codes
-     * still in its text.</p>
+     * still in its text.
      *
      * @return the lines, at least one
      */
@@ -344,8 +344,8 @@ public final class TextSegment {
      * Wraps this segment and its siblings into the lines the client's {@code Font#split} cuts them into at a
      * width, as the client wraps a book page, each line's runs read for drawing as {@link #toLines()} reads
      * a line's.
-     *
-     * <p>The text is wrapped as written, its legacy codes still in it. Each codepoint is measured by its
+     * <p>
+     * The text is wrapped as written, its legacy codes still in it. Each codepoint is measured by its
      * advance in the font its style resolves to, a bold face's own advance included, the style being what
      * the codes before it leave as the text is walked - from its own style, a reset returning to no style at
      * all. A line ends at a {@code \n}, which is not drawn, and otherwise at the first codepoint that takes it
@@ -356,19 +356,19 @@ public final class TextSegment {
      * one and a negative advance is, a space before the last one stays at the end of its line, a space opening
      * a line before a word wider than the width answers an empty line, and a space ending a line just before a
      * {@code \n} answers an empty line after it. Nothing else ends a line, U+2028 included, and a width below 1
-     * wraps at 1.</p>
-     *
-     * <p>The text after a break opens its line in the style in force at the break - at a space, the style that
+     * wraps at 1.
+     * <p>
+     * The text after a break opens its line in the style in force at the break - at a space, the style that
      * space was walked in - as the codes before it left it, and its own codes are read again from there; the
      * pieces of text after it keep their own styles. So the text after a reset a break follows opens its line
      * in no style at all. Each line's codes are then read for drawing from the style each of its pieces opens
-     * in, a reset returning to that style.</p>
-     *
-     * <p>A sprite measures as the text drawn in its place, a bold glyph at its bold face's advance and a lone
+     * in, a reset returning to that style.
+     * <p>
+     * A sprite measures as the text drawn in its place, a bold glyph at its bold face's advance and a lone
      * surrogate as its own glyph, as this library draws them, where the client measures one U+FFFC in the
      * sprite's font, adds each glyph's own bold offset to its regular advance and measures U+FFFD. So a bold
      * glyph whose bold face lacks the client's bold offset - every glyph of a font with no bold face among
-     * them - measures off the client's.</p>
+     * them - measures off the client's.
      *
      * @param maxWidthMcPixels the width a line may run to, in mcPixels
      * @return the lines - none for a segment whose text, its siblings' included, is empty, and an empty one
@@ -587,21 +587,21 @@ public final class TextSegment {
     /**
      * Reads legacy text into a line of runs, from no style, as the client's font reads the legacy codes in a
      * text it draws.
-     *
-     * <p>A section sign ({@link ChatFormat#SECTION_SYMBOL}) and the character after it are a code, and neither is
+     * <p>
+     * A section sign ({@link ChatFormat#SECTION_SYMBOL}) and the character after it are a code, and neither is
      * drawn. The character, in its lower case, names a colour, which the code sets and turns every format off
      * with; a format, which it turns on over the colour and the formats already on; or {@code r}, which returns
      * to no style. Any other character is dropped with the sign before it, and a sign ending the text is
-     * dropped.</p>
-     *
-     * <p>{@code symbolSubstitute} is a stand-in for the section sign, which few keyboards have: it reads as the
+     * dropped.
+     * <p>
+     * {@code symbolSubstitute} is a stand-in for the section sign, which few keyboards have: it reads as the
      * sign where a code character follows it as written - {@code 0} to {@code 9}, {@code a} to {@code f},
      * {@code k} to {@code o} or {@code r} - and is text anywhere else, as the client keeps as text every
-     * character it reads no code in.</p>
-     *
-     * <p>Each run's text takes the substitution {@link Builder#text(String)} applies. A run in the style of the
+     * character it reads no code in.
+     * <p>
+     * Each run's text takes the substitution {@link Builder#text(String)} applies. A run in the style of the
      * run before it joins that run and a code no text follows starts none, as {@link #toLines()} answers a
-     * line's runs.</p>
+     * line's runs.
      *
      * @param legacyText the legacy text
      * @param symbolSubstitute the character that stands for the section sign before a code
